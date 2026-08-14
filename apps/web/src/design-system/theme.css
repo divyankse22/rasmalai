@@ -1,0 +1,40 @@
+/*
+ * Rasmalai visual identity — the whole thing.
+ *
+ * `docs/01_PRODUCT_SPEC.md` requires the theme to be replaceable later: swap the values in this one
+ * file and the entire app reskins. Components must reference these tokens and never hardcode a
+ * colour, radius, shadow or duration.
+ */
+@theme {
+  /* Palette: soft, cute, pastel. */
+  --color-cream: #fff8f2;
+  --color-shell: #fffdfb;
+  --color-blush: #ffd6e0;
+  --color-berry: #f2678f;
+  --color-berry-deep: #d84972;
+  --color-mint: #c8f0e0;
+  --color-sky: #cfe6ff;
+  --color-butter: #ffeec2;
+  --color-lilac: #e5dbff;
+  --color-ink: #3d2b3a;
+  --color-muted: #8b7684;
+  --color-line: #f1e3ea;
+
+  /* Type. System stacks only, so builds stay deterministic and offline-friendly. */
+  --font-display: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Quicksand', system-ui, sans-serif;
+  --font-body: ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
+
+  /* Roundness. Rasmalai has no sharp corners. */
+  --radius-soft: 1rem;
+  --radius-pill: 999px;
+  --radius-card: 1.75rem;
+
+  /* Soft, low-contrast depth. */
+  --shadow-soft: 0 8px 24px -12px rgb(61 43 58 / 0.25);
+  --shadow-lift: 0 16px 40px -16px rgb(61 43 58 / 0.32);
+
+  /* Motion. Small and springy; nothing longer than a blink. */
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-quick: 120ms;
+  --duration-soft: 240ms;
+}

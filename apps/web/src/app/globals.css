@@ -1,0 +1,25 @@
+@import 'tailwindcss';
+@import '../design-system/theme.css';
+
+html {
+  /* Games rely on deliberate gestures; stop the browser hijacking a fast double-tap as zoom. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  min-height: 100dvh;
+}
+
+/* Respect the platform accessibility setting rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
