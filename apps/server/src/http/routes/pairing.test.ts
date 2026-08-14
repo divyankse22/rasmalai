@@ -38,6 +38,9 @@ const respond = (accept: boolean, token = 'valid') =>
     body: JSON.stringify({ accept }),
   });
 
+const cancel = (token = 'valid') =>
+  request('/api/pairing/requests/request-1/cancel', { method: 'POST', token, body: '{}' });
+
 beforeEach(async () => {
   pairing = createStubPairingRepository();
   realtime = createRecordingNotifier();
@@ -64,6 +67,7 @@ describe('authentication', () => {
     ['GET', '/api/pairing'],
     ['POST', '/api/pairing/requests'],
     ['POST', '/api/pairing/requests/request-1/respond'],
+    ['POST', '/api/pairing/requests/request-1/cancel'],
   ])('refuses %s %s without a token', async (method, path) => {
     const response = await request(path, {
       method,
@@ -164,6 +168,12 @@ describe('POST /api/pairing/requests/:id/respond', () => {
     expect(response.status).toBe(409);
   });
 
+  it('rejecting frees both sides to try again', async () => {
+    const response = await respond(false);
+
+    await expect(response.json()).resolves.toEqual({ couple: null, incoming: [], outgoing: [] });
+  });
+
   it('requires an explicit accept or reject', async () => {
     const response = await request('/api/pairing/requests/request-1/respond', {
       method: 'POST',
@@ -171,5 +181,35 @@ describe('POST /api/pairing/requests/:id/respond', () => {
       body: JSON.stringify({ accept: 'yes please' }),
     });
     expect(response.status).toBe(400);
+  });
+});
+
+describe('POST /api/pairing/requests/:id/cancel', () => {
+  it('withdraws the request and clears it off the other screen', async () => {
+    const response = await cancel();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ couple: null, incoming: [], outgoing: [] });
+    expect(realtime.sent).toEqual([
+      {
+        userId: OTHER_USER_ID,
+        type: EVENTS.pairing.requestCancelled,
+        payload: { requestId: 'request-1' },
+      },
+    ]);
+  });
+
+  it('refuses to cancel a request the caller did not send', async () => {
+    pairing.failWith(new PairingError('request_not_found', 'gone'));
+    const response = await cancel();
+
+    expect(response.status).toBe(404);
+    expect(realtime.sent).toHaveLength(0);
+  });
+
+  it('refuses to cancel one that was already answered', async () => {
+    pairing.failWith(new PairingError('request_not_pending', 'answered'));
+
+    expect((await cancel()).status).toBe(409);
   });
 });

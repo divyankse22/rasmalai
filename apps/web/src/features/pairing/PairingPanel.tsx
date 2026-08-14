@@ -20,6 +20,7 @@ const PAIRING_EVENTS = new Set<string>([
   EVENTS.pairing.requestCreated,
   EVENTS.pairing.requestAccepted,
   EVENTS.pairing.requestRejected,
+  EVENTS.pairing.requestCancelled,
 ]);
 
 export function PairingPanel({
@@ -170,7 +171,7 @@ export function PairingPanel({
           above.
         </p>
       ) : outgoing.length > 0 ? (
-        <Card className="flex flex-col items-center gap-2 text-center">
+        <Card className="flex flex-col items-center gap-3 text-center">
           <p className="text-ink">
             Waiting for{' '}
             <span className="font-display font-semibold">{outgoing[0]?.otherUser.actualName}</span>{' '}
@@ -180,6 +181,13 @@ export function PairingPanel({
             It is on their screen now — only they can accept it. This page updates itself the
             moment they do.
           </p>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => void post(`/api/pairing/requests/${outgoing[0]?.id}/cancel`, {})}
+          >
+            Cancel request
+          </Button>
         </Card>
       ) : (
         <Card className="flex flex-col gap-3">

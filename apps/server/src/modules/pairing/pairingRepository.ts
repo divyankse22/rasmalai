@@ -51,15 +51,31 @@ export interface PairingRepository {
   getState(userId: string): Promise<PairingState>;
   requestByCode(requesterId: string, pairingCode: string): Promise<PairingRequestSummary>;
   respond(userId: string, requestId: string, accept: boolean): Promise<RespondResult>;
+  /** Withdraws a request the caller sent. Only the requester may do this. */
+  cancel(userId: string, requestId: string): Promise<CancelResult>;
 }
 
-const OTHER_USER_COLUMNS = `u.id, u.actual_name, u.nickname, u.avatar_key`;
+export interface CancelResult {
+  state: PairingState;
+  /** The person who was waiting on it, so their screen can be cleared immediately. */
+  otherUserId: string;
+}
+
+/**
+ * Every column is aliased deliberately.
+ *
+ * `pairing_requests` and `users` both have an `id`, and node-postgres builds each row as a plain
+ * object, so a later `id` silently overwrites an earlier one. Selecting `r.id` alongside `u.id`
+ * handed back the *user's* id as the request id, and the only symptom was a 404 on accept. Aliasing
+ * is not stylistic here; unaliased columns are a correctness bug waiting to happen.
+ */
+const REQUEST_COLUMNS = `r.id as request_id, r.status, r.created_at,
+  u.id as other_id, u.actual_name, u.nickname, u.avatar_key`;
 
 interface RequestRow {
-  id: string;
+  request_id: string;
   status: PairingRequestSummary['status'];
   created_at: Date;
-  id_1?: string;
   other_id: string;
   actual_name: string;
   nickname: string;
@@ -68,7 +84,7 @@ interface RequestRow {
 
 function toRequest(row: RequestRow): PairingRequestSummary {
   return {
-    id: row.id,
+    id: row.request_id,
     status: row.status,
     createdAt: row.created_at.toISOString(),
     otherUser: {
@@ -104,7 +120,7 @@ export function createPairingRepository(pool: Pool): PairingRepository {
     );
 
     const incoming = await executor.query<RequestRow>(
-      `select r.id, r.status, r.created_at, ${OTHER_USER_COLUMNS}, u.id as other_id
+      `select ${REQUEST_COLUMNS}
          from public.pairing_requests r
          join public.users u on u.id = r.requester_user_id
         where r.target_user_id = $1 and r.status = 'pending'
@@ -113,7 +129,7 @@ export function createPairingRepository(pool: Pool): PairingRepository {
     );
 
     const outgoing = await executor.query<RequestRow>(
-      `select r.id, r.status, r.created_at, ${OTHER_USER_COLUMNS}, u.id as other_id
+      `select ${REQUEST_COLUMNS}
          from public.pairing_requests r
          join public.users u on u.id = r.target_user_id
         where r.requester_user_id = $1 and r.status = 'pending'
@@ -230,6 +246,42 @@ export function createPairingRepository(pool: Pool): PairingRepository {
             'You have already asked them — they just need to accept.',
           );
         }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async cancel(userId, requestId) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+
+        // Only the sender may withdraw, and only while it is still unanswered. Cancelling frees
+        // the partial unique index, so either of them can start again straight away.
+        const request = await client.query<{ target_user_id: string; status: string }>(
+          `select target_user_id, status from public.pairing_requests
+            where id = $1 and requester_user_id = $2 for update`,
+          [requestId, userId],
+        );
+        const row = request.rows[0];
+        if (!row) {
+          throw new PairingError('request_not_found', 'That request no longer exists.');
+        }
+        if (row.status !== 'pending') {
+          throw new PairingError('request_not_pending', 'That request was already answered.');
+        }
+
+        await client.query(
+          `update public.pairing_requests set status = 'cancelled', responded_at = now()
+            where id = $1`,
+          [requestId],
+        );
+        await client.query('commit');
+
+        return { state: await readState(pool, userId), otherUserId: row.target_user_id };
+      } catch (error) {
+        await client.query('rollback');
         throw error;
       } finally {
         client.release();

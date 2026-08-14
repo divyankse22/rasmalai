@@ -1,6 +1,7 @@
 import type { TokenVerifier } from '../auth/tokenVerifier';
 import {
   PairingError,
+  type CancelResult,
   type PairingRepository,
   type PairingRequestSummary,
   type PairingState,
@@ -135,6 +136,11 @@ export function createStubPairingRepository(): PairingRepository & {
           avatarKey: 'fox',
         },
       };
+    },
+
+    async cancel(): Promise<CancelResult> {
+      if (failure) throw failure;
+      return { state: structuredClone(emptyState), otherUserId: OTHER_USER_ID };
     },
 
     async respond(_userId: string, _requestId: string, accept: boolean): Promise<RespondResult> {

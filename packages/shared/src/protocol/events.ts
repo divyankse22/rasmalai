@@ -16,6 +16,7 @@ export const EVENTS = {
     requestCreated: 'pairing.request.created',
     requestAccepted: 'pairing.request.accepted',
     requestRejected: 'pairing.request.rejected',
+    requestCancelled: 'pairing.request.cancelled',
   },
   invitation: {
     created: 'game.invitation.created',

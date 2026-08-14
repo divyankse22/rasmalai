@@ -74,6 +74,34 @@ export function createPairingRouter(
     },
   );
 
+  router.post('/pairing/requests/:id/cancel', async (req: Request, res: Response) => {
+    const userId = req.userId!;
+    const requestId = req.params.id;
+    if (typeof requestId !== 'string') {
+      res.status(400).json({ error: { code: 'invalid_payload', message: 'Unknown request.' } });
+      return;
+    }
+
+    try {
+      const { state, otherUserId } = await pairing.cancel(userId, requestId);
+
+      // Clear it off their screen at once, rather than leaving them holding a request that has
+      // already been withdrawn.
+      realtime.sendToUser(otherUserId, EVENTS.pairing.requestCancelled, { requestId });
+      logger.info({ userId }, 'pairing request cancelled');
+
+      res.json(state);
+    } catch (error) {
+      if (error instanceof PairingError) {
+        res.status(STATUS_BY_CODE[error.code] ?? 400).json({
+          error: { code: 'invalid_action', reason: error.code, message: error.message },
+        });
+        return;
+      }
+      throw error;
+    }
+  });
+
   router.post('/pairing/requests/:id/respond', async (req: Request, res: Response) => {
     const parsed = respondBody.safeParse(req.body);
     if (!parsed.success) {
