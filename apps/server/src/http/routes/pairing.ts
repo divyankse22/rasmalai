@@ -22,6 +22,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   already_paired: 409,
   partner_already_paired: 409,
   request_already_pending: 409,
+  request_incoming_pending: 409,
   request_not_found: 404,
   request_not_pending: 409,
 };

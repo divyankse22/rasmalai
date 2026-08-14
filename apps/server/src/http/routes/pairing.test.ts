@@ -101,6 +101,7 @@ describe('POST /api/pairing/requests', () => {
     ['already_paired', 409],
     ['partner_already_paired', 409],
     ['request_already_pending', 409],
+    ['request_incoming_pending', 409],
   ] as const)('maps %s to HTTP %i', async (code, status) => {
     pairing.failWith(new PairingError(code, 'nope'));
     const response = await submitCode('GOODCODE');

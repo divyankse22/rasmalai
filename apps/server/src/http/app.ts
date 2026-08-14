@@ -6,6 +6,7 @@ import type { PairingRepository } from '../modules/pairing/pairingRepository';
 import type { UsersRepository } from '../modules/users/usersRepository';
 import type { RealtimeNotifier } from '../ws/notifier';
 import { logger } from '../logger';
+import { requestLogger } from './requestLogger';
 import { createPairingRouter } from './routes/pairing';
 import { createUsersRouter } from './routes/users';
 
@@ -26,6 +27,7 @@ export function createApp({ appOrigin, verifier, users, pairing, realtime }: App
   app.disable('x-powered-by');
   app.use(cors({ origin: appOrigin, credentials: true }));
   app.use(express.json({ limit: '64kb' }));
+  app.use(requestLogger());
 
   /**
    * Liveness/readiness probe for Render and for `docker run`.

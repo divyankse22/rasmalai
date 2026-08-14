@@ -31,6 +31,7 @@ export class PairingError extends Error {
       | 'already_paired'
       | 'partner_already_paired'
       | 'request_already_pending'
+      | 'request_incoming_pending'
       | 'request_not_found'
       | 'request_not_pending',
     message: string,
@@ -175,6 +176,20 @@ export function createPairingRepository(pool: Pool): PairingRepository {
           throw new PairingError('already_paired', 'You are already paired.');
         }
 
+        // If they already asked us, entering their code is a dead end - the only thing that can
+        // happen next is accepting. Saying so is far more useful than "a request already exists".
+        const incoming = await client.query<{ id: string }>(
+          `select id from public.pairing_requests
+            where requester_user_id = $1 and target_user_id = $2 and status = 'pending'`,
+          [targetRow.id, requesterId],
+        );
+        if (incoming.rows.length > 0) {
+          throw new PairingError(
+            'request_incoming_pending',
+            'They already sent you a request — accept it above instead ❤️',
+          );
+        }
+
         const inserted = await client.query<{ id: string; created_at: Date }>(
           `insert into public.pairing_requests (requester_user_id, target_user_id)
            values ($1, $2)
@@ -212,7 +227,7 @@ export function createPairingRepository(pool: Pool): PairingRepository {
         if ((error as { code?: string }).code === '23505') {
           throw new PairingError(
             'request_already_pending',
-            'There is already a pairing request between you two.',
+            'You have already asked them — they just need to accept.',
           );
         }
         throw error;

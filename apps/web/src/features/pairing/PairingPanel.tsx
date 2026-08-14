@@ -162,7 +162,14 @@ export function PairingPanel({
         </Button>
       </Card>
 
-      {outgoing.length > 0 ? (
+      {incoming.length > 0 ? (
+        // Entering their code here could only ever fail: they have already asked, so the one
+        // useful action is the Accept button above. Offering the form anyway is a trap.
+        <p className="px-4 text-center text-sm text-muted">
+          No need for a code — {incoming[0]?.otherUser.actualName} already found you. Just accept
+          above.
+        </p>
+      ) : outgoing.length > 0 ? (
         <Card className="flex flex-col items-center gap-2 text-center">
           <p className="text-ink">
             Waiting for{' '}
@@ -170,7 +177,8 @@ export function PairingPanel({
             to accept…
           </p>
           <p className="text-sm text-muted">
-            This page updates itself the moment they do — no need to refresh.
+            It is on their screen now — only they can accept it. This page updates itself the
+            moment they do.
           </p>
         </Card>
       ) : (

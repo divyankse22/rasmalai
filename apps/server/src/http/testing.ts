@@ -121,7 +121,9 @@ export function createStubPairingRepository(): PairingRepository & {
 
     async requestByCode(_requesterId: string, code: string): Promise<PairingRequestSummary> {
       if (failure) throw failure;
-      if (code !== 'GOODCODE') throw new PairingError('code_not_found', 'We could not find that code.');
+      if (code !== 'GOODCODE') {
+        throw new PairingError('code_not_found', 'We could not find that code.');
+      }
       return {
         id: 'request-1',
         status: 'pending',
