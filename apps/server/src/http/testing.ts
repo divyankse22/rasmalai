@@ -87,14 +87,24 @@ export interface SentEvent {
   payload: unknown;
 }
 
-export function createRecordingNotifier(): RealtimeNotifier & { sent: SentEvent[] } {
+export function createRecordingNotifier(): RealtimeNotifier & {
+  sent: SentEvent[];
+  recipientsOf(type: string): string[];
+} {
   const sent: SentEvent[] = [];
-  return {
+  const notifier = {
     sent,
-    sendToUser(userId, type, payload) {
+    sendToUser(userId: string, type: string, payload: unknown) {
       sent.push({ userId, type, payload });
     },
+    sendToUsers(userIds: readonly string[], type: string, payload: unknown) {
+      for (const userId of new Set(userIds)) notifier.sendToUser(userId, type, payload);
+    },
+    recipientsOf(type: string) {
+      return sent.filter((event) => event.type === type).map((event) => event.userId);
+    },
   };
+  return notifier;
 }
 
 const emptyState: PairingState = { couple: null, incoming: [], outgoing: [] };

@@ -5,6 +5,7 @@ import { PairingError } from '../../modules/pairing/pairingRepository';
 import { createApp } from '../app';
 import {
   OTHER_USER_ID,
+  TEST_USER_ID,
   createInMemoryUsersRepository,
   createRecordingNotifier,
   createStubPairingRepository,
@@ -78,13 +79,13 @@ describe('authentication', () => {
 });
 
 describe('POST /api/pairing/requests', () => {
-  it('creates a request and tells the other person over their socket', async () => {
+  it('creates a request and tells both people over their sockets', async () => {
     const response = await submitCode('GOODCODE');
 
     expect(response.status).toBe(201);
-    expect(realtime.sent).toEqual([
-      { userId: OTHER_USER_ID, type: EVENTS.pairing.requestCreated, payload: { requestId: 'request-1' } },
-    ]);
+    expect(realtime.recipientsOf(EVENTS.pairing.requestCreated).sort()).toEqual(
+      [OTHER_USER_ID, TEST_USER_ID].sort(),
+    );
   });
 
   it('accepts a code however it was typed', async () => {
@@ -138,19 +139,19 @@ describe('POST /api/pairing/requests/:id/respond', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ couple: { id: 'couple-1' } });
-    expect(realtime.sent).toEqual([
-      { userId: OTHER_USER_ID, type: EVENTS.pairing.requestAccepted, payload: { coupleId: 'couple-1' } },
-    ]);
+    expect(realtime.recipientsOf(EVENTS.pairing.requestAccepted).sort()).toEqual(
+      [OTHER_USER_ID, TEST_USER_ID].sort(),
+    );
   });
 
-  it('rejecting notifies the requester, not the person who rejected', async () => {
+  it('rejecting reaches the requester and the rejecter’s own other devices', async () => {
     await respond(false);
 
-    expect(realtime.sent).toHaveLength(1);
-    expect(realtime.sent[0]).toMatchObject({
-      userId: OTHER_USER_ID,
-      type: EVENTS.pairing.requestRejected,
-    });
+    // The requester needs to stop waiting; the rejecter's second screen must stop showing a
+    // request that has already been answered.
+    expect(realtime.recipientsOf(EVENTS.pairing.requestRejected).sort()).toEqual(
+      [OTHER_USER_ID, TEST_USER_ID].sort(),
+    );
   });
 
   it('refuses to answer a request that is not yours', async () => {
@@ -190,13 +191,9 @@ describe('POST /api/pairing/requests/:id/cancel', () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ couple: null, incoming: [], outgoing: [] });
-    expect(realtime.sent).toEqual([
-      {
-        userId: OTHER_USER_ID,
-        type: EVENTS.pairing.requestCancelled,
-        payload: { requestId: 'request-1' },
-      },
-    ]);
+    expect(realtime.recipientsOf(EVENTS.pairing.requestCancelled).sort()).toEqual(
+      [OTHER_USER_ID, TEST_USER_ID].sort(),
+    );
   });
 
   it('refuses to cancel a request the caller did not send', async () => {

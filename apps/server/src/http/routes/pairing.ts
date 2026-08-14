@@ -56,7 +56,8 @@ export function createPairingRouter(
       try {
         const request = await pairing.requestByCode(userId, normalisePairingCode(parsed.data.code));
 
-        realtime.sendToUser(request.otherUser.id, EVENTS.pairing.requestCreated, {
+        // Both parties, so a second device belonging to either one stays in step.
+        realtime.sendToUsers([request.otherUser.id, userId], EVENTS.pairing.requestCreated, {
           requestId: request.id,
         });
         logger.info({ userId }, 'pairing request created');
@@ -87,7 +88,7 @@ export function createPairingRouter(
 
       // Clear it off their screen at once, rather than leaving them holding a request that has
       // already been withdrawn.
-      realtime.sendToUser(otherUserId, EVENTS.pairing.requestCancelled, { requestId });
+      realtime.sendToUsers([otherUserId, userId], EVENTS.pairing.requestCancelled, { requestId });
       logger.info({ userId }, 'pairing request cancelled');
 
       res.json(state);
@@ -126,13 +127,15 @@ export function createPairingRouter(
       );
 
       // Tell the requester either way, so nobody sits watching a stale screen.
+      // Sent to both, so the answer lands on every screen either of them has open - not just on
+      // the other person's.
       if (accepted) {
-        realtime.sendToUser(otherUserId, EVENTS.pairing.requestAccepted, {
+        realtime.sendToUsers([otherUserId, userId], EVENTS.pairing.requestAccepted, {
           coupleId: state.couple?.id,
         });
         logger.info({ userId }, 'pairing accepted');
       } else {
-        realtime.sendToUser(otherUserId, EVENTS.pairing.requestRejected, { requestId });
+        realtime.sendToUsers([otherUserId, userId], EVENTS.pairing.requestRejected, { requestId });
       }
 
       res.json(state);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { EVENTS } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
@@ -45,7 +45,20 @@ export function PairingPanel({
     },
     [router],
   );
-  useRealtimeConnection({ onEvent });
+  const status = useRealtimeConnection({ onEvent });
+
+  // Events that fired while this device was asleep or offline are simply gone, so a screen that
+  // was disconnected can be showing a request the other device already answered. Resyncing on
+  // reconnect closes that window without any polling.
+  const wasOffline = useRef(false);
+  useEffect(() => {
+    if (status === 'connected' && wasOffline.current) {
+      wasOffline.current = false;
+      router.refresh();
+    } else if (status === 'offline') {
+      wasOffline.current = true;
+    }
+  }, [status, router]);
 
   async function post(path: string, body: unknown): Promise<boolean> {
     setBusy(true);
@@ -87,9 +100,13 @@ export function PairingPanel({
 
   async function submitCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const code = String(form.get('code') ?? '');
-    if (await post('/api/pairing/requests', { code })) event.currentTarget.reset();
+
+    // Hold the form element now: the browser clears `currentTarget` once dispatch finishes, so
+    // reading it after the await below would be null and throw on .reset().
+    const form = event.currentTarget;
+    const code = String(new FormData(form).get('code') ?? '');
+
+    if (await post('/api/pairing/requests', { code })) form.reset();
   }
 
   async function copyCode() {
