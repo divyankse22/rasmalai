@@ -17,6 +17,11 @@
   --color-butter: #ffeec2;
   --color-lilac: #e5dbff;
   --color-ink: #3d2b3a;
+
+  /* Names are coloured by gender. Both are darkened enough to stay readable as body text on
+     cream, rather than being the pastel fill colours used for backgrounds. */
+  --color-name-male: #2f6fd0;
+  --color-name-female: #e0447a;
   --color-muted: #8b7684;
   --color-line: #f1e3ea;
 

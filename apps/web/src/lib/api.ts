@@ -1,11 +1,14 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
+export type Gender = 'male' | 'female';
+
 export interface UserProfile {
   id: string;
   actualName: string;
   nickname: string;
   birthYear: number;
   avatarKey: string;
+  gender: Gender;
   partnerLabelName: string;
   partnerLabelNickname: string;
   firstMetDate: string;
@@ -52,6 +55,7 @@ export interface PairingPerson {
   actualName: string;
   nickname: string;
   avatarKey: string;
+  gender: Gender;
 }
 
 export interface PairingState {

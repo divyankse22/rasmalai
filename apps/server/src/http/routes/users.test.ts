@@ -18,6 +18,7 @@ const VALID_PROFILE = {
   nickname: 'Div',
   birthYear: 1996,
   avatarKey: 'fox',
+  gender: 'female',
   partnerLabelName: 'Anshuman',
   partnerLabelNickname: 'Anshu',
   firstMetDate: '2021-03-14',
@@ -154,6 +155,8 @@ describe('POST /api/onboarding', () => {
     ['an unknown avatar', { avatarKey: 'dragon' }],
     ['an unknown location type', { locationType: 'mars' }],
     ['a missing nickname', { nickname: '  ' }],
+    ['an unknown gender', { gender: 'unspecified' }],
+    ['an empty gender', { gender: '' }],
   ])('rejects %s', async (_label, override) => {
     const response = await onboard({ ...VALID_PROFILE, ...override });
     expect(response.status).toBe(400);

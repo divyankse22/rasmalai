@@ -25,6 +25,16 @@ export const AVATAR_KEYS = [
 
 export type AvatarKey = (typeof AVATAR_KEYS)[number];
 
+/**
+ * Required, because names are coloured by it.
+ *
+ * Only two values for now, since the colouring is defined for exactly these two. Adding another
+ * option means deciding what colour it gets, so it is a product decision rather than a schema one.
+ */
+export const GENDERS = ['male', 'female'] as const;
+
+export type Gender = (typeof GENDERS)[number];
+
 /** Youngest age we will accept, matching Google's own minimum for an account. */
 const MINIMUM_AGE = 13;
 const EARLIEST_BIRTH_YEAR = 1900;
@@ -56,7 +66,10 @@ export function onboardingSchema(now: Date = new Date()) {
       .int()
       .min(EARLIEST_BIRTH_YEAR, 'That birth year looks too far back')
       .max(currentYear - MINIMUM_AGE, `You must be at least ${MINIMUM_AGE} to use Rasmalai`),
-    avatarKey: z.enum(AVATAR_KEYS),
+    // Custom messages: zod's own wording ("Invalid option: expected one of ...") is written for a
+    // developer, and these strings are shown directly under the field.
+    avatarKey: z.enum(AVATAR_KEYS, { error: 'Pick an avatar' }),
+    gender: z.enum(GENDERS, { error: 'Please choose one' }),
 
     // P-1: this is the user's own private label for their partner, not the partner's real profile.
     partnerLabelName: trimmed(1, 60, "Partner's name"),
@@ -75,7 +88,7 @@ export function onboardingSchema(now: Date = new Date()) {
         (value) => Number(value.slice(0, 4)) >= EARLIEST_BIRTH_YEAR,
         'That date looks too far back',
       ),
-    locationType: z.enum(LOCATION_TYPES),
+    locationType: z.enum(LOCATION_TYPES, { error: 'Pick where you two are' }),
   });
 }
 

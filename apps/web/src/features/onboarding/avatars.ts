@@ -26,6 +26,11 @@ export function avatarGlyph(key: string): string {
   return BY_KEY.get(key)?.glyph ?? '🍡';
 }
 
+export const GENDER_OPTIONS = [
+  { value: 'female', label: 'Female' },
+  { value: 'male', label: 'Male' },
+] as const;
+
 export const LOCATION_OPTIONS = [
   { value: 'same_city', label: 'Same city' },
   { value: 'different_city', label: 'Different cities' },

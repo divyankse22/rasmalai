@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { formatCalendarDate } from '../../db/calendarDate';
-import type { AvatarKey, LocationType, OnboardingInput } from './user.schema';
+import type { AvatarKey, Gender, LocationType, OnboardingInput } from './user.schema';
 
 export interface UserProfile {
   id: string;
@@ -8,6 +8,7 @@ export interface UserProfile {
   nickname: string;
   birthYear: number;
   avatarKey: AvatarKey;
+  gender: Gender;
   partnerLabelName: string;
   partnerLabelNickname: string;
   firstMetDate: string;
@@ -31,6 +32,7 @@ interface UserRow {
   nickname: string;
   birth_year: number;
   avatar_key: AvatarKey;
+  gender: Gender;
   partner_label_name: string;
   partner_label_nickname: string;
   first_met_date: Date | string;
@@ -45,6 +47,7 @@ function toProfile(row: UserRow): UserProfile {
     nickname: row.nickname,
     birthYear: row.birth_year,
     avatarKey: row.avatar_key,
+    gender: row.gender,
     partnerLabelName: row.partner_label_name,
     partnerLabelNickname: row.partner_label_nickname,
     firstMetDate: formatCalendarDate(row.first_met_date),
@@ -53,7 +56,7 @@ function toProfile(row: UserRow): UserProfile {
   };
 }
 
-const COLUMNS = `id, actual_name, nickname, birth_year, avatar_key, partner_label_name,
+const COLUMNS = `id, actual_name, nickname, birth_year, avatar_key, gender, partner_label_name,
   partner_label_nickname, first_met_date, location_type, pairing_code`;
 
 export function createUsersRepository(pool: Pool): UsersRepository {
@@ -71,10 +74,10 @@ export function createUsersRepository(pool: Pool): UsersRepository {
       try {
         const { rows } = await pool.query<UserRow>(
           `insert into public.users (
-             id, actual_name, nickname, birth_year, avatar_key,
+             id, actual_name, nickname, birth_year, avatar_key, gender,
              partner_label_name, partner_label_nickname,
              first_met_date, location_type, pairing_code
-           ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            returning ${COLUMNS}`,
           [
             userId,
@@ -82,6 +85,7 @@ export function createUsersRepository(pool: Pool): UsersRepository {
             input.nickname,
             input.birthYear,
             input.avatarKey,
+            input.gender,
             input.partnerLabelName,
             input.partnerLabelNickname,
             input.firstMetDate,

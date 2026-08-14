@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { EVENTS } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
+import { PersonName, type Gender } from '@/design-system/PersonName';
 import { avatarGlyph } from '@/features/onboarding/avatars';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useRealtimeConnection } from '@/realtime/useRealtimeConnection';
@@ -13,7 +14,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 export interface PairingRequestView {
   id: string;
-  otherUser: { id: string; actualName: string; nickname: string; avatarKey: string };
+  otherUser: { id: string; actualName: string; nickname: string; avatarKey: string; gender: Gender };
 }
 
 const PAIRING_EVENTS = new Set<string>([
@@ -136,7 +137,10 @@ export function PairingPanel({
                   {avatarGlyph(request.otherUser.avatarKey)}
                 </span>
                 <p className="text-ink">
-                  <span className="font-display font-semibold">{request.otherUser.actualName}</span>{' '}
+                  <PersonName
+                    name={request.otherUser.actualName}
+                    gender={request.otherUser.gender}
+                  />{' '}
                   wants to pair with you ❤️
                 </p>
               </div>
@@ -191,7 +195,10 @@ export function PairingPanel({
         <Card className="flex flex-col items-center gap-3 text-center">
           <p className="text-ink">
             Waiting for{' '}
-            <span className="font-display font-semibold">{outgoing[0]?.otherUser.actualName}</span>{' '}
+            <PersonName
+              name={outgoing[0]?.otherUser.actualName ?? ''}
+              gender={outgoing[0]?.otherUser.gender}
+            />{' '}
             to accept…
           </p>
           <p className="text-sm text-muted">

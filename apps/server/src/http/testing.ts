@@ -69,6 +69,7 @@ export function createInMemoryUsersRepository(): UsersRepository & {
         nickname: input.nickname,
         birthYear: input.birthYear,
         avatarKey: input.avatarKey,
+        gender: input.gender,
         partnerLabelName: input.partnerLabelName,
         partnerLabelNickname: input.partnerLabelNickname,
         firstMetDate: input.firstMetDate,
@@ -144,6 +145,7 @@ export function createStubPairingRepository(): PairingRepository & {
           actualName: 'Other Person',
           nickname: 'Other',
           avatarKey: 'fox',
+          gender: 'female',
         },
       };
     },
@@ -167,6 +169,7 @@ export function createStubPairingRepository(): PairingRepository & {
                   actualName: 'Other Person',
                   nickname: 'Other',
                   avatarKey: 'fox',
+                  gender: 'female',
                 },
               },
               incoming: [],

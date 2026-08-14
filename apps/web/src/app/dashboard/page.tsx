@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { Card } from '@/design-system/Card';
+import { PersonName } from '@/design-system/PersonName';
 import { SignOutButton } from '@/features/auth/SignOutButton';
 import { avatarGlyph } from '@/features/onboarding/avatars';
 import { getMyProfile, getPairingState } from '@/lib/api';
@@ -56,8 +57,16 @@ export default async function DashboardPage() {
       </header>
 
       <Card className="flex flex-col items-center gap-2 text-center">
-        <p className="font-display text-2xl font-bold text-berry">
-          {profile.nickname} &amp; {profile.partnerLabelNickname}
+        <p className="font-display text-2xl font-bold">
+          {/* Your own nickname takes your colour; theirs takes the partner's, even though the
+              label itself is your private name for them. */}
+          <PersonName name={profile.nickname} gender={profile.gender} className="text-2xl" />
+          <span className="text-ink"> &amp; </span>
+          <PersonName
+            name={profile.partnerLabelNickname}
+            gender={couple.partner.gender}
+            className="text-2xl"
+          />
         </p>
         <p className="text-muted">
           {daysTogether(couple.firstMetDate).toLocaleString()} days together

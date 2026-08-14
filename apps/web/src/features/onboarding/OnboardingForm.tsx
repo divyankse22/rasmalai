@@ -6,7 +6,7 @@ import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
 import { SelectField, TextField } from '@/design-system/Field';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { AVATARS, LOCATION_OPTIONS } from './avatars';
+import { AVATARS, GENDER_OPTIONS, LOCATION_OPTIONS } from './avatars';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -31,6 +31,7 @@ export function OnboardingForm({ suggestedName }: { suggestedName: string }) {
       nickname: String(form.get('nickname') ?? ''),
       birthYear: Number(form.get('birthYear') ?? 0),
       avatarKey,
+      gender: String(form.get('gender') ?? ''),
       partnerLabelName: String(form.get('partnerLabelName') ?? ''),
       partnerLabelNickname: String(form.get('partnerLabelNickname') ?? ''),
       firstMetDate: String(form.get('firstMetDate') ?? ''),
@@ -104,6 +105,14 @@ export function OnboardingForm({ suggestedName }: { suggestedName: string }) {
           max={new Date().getFullYear()}
           required
           {...(errors.birthYear ? { error: errors.birthYear } : {})}
+        />
+        <SelectField
+          label="Gender"
+          name="gender"
+          options={GENDER_OPTIONS}
+          defaultValue="female"
+          required
+          {...(errors.gender ? { error: errors.gender } : {})}
         />
 
         <fieldset className="flex flex-col gap-2">

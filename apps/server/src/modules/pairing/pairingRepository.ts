@@ -1,20 +1,28 @@
 import type { Pool } from 'pg';
 import { formatCalendarDate } from '../../db/calendarDate';
-import type { LocationType } from '../users/user.schema';
+import type { Gender, LocationType } from '../users/user.schema';
+
+/** What either partner is allowed to see about the other. */
+export interface PairingPerson {
+  id: string;
+  actualName: string;
+  nickname: string;
+  avatarKey: string;
+  gender: Gender;
+}
 
 export interface PairingRequestSummary {
   id: string;
   status: 'pending' | 'accepted' | 'rejected' | 'cancelled';
   createdAt: string;
-  /** The other person, described only as much as the recipient is allowed to see. */
-  otherUser: { id: string; actualName: string; nickname: string; avatarKey: string };
+  otherUser: PairingPerson;
 }
 
 export interface CoupleSummary {
   id: string;
   firstMetDate: string;
   locationType: LocationType;
-  partner: { id: string; actualName: string; nickname: string; avatarKey: string };
+  partner: PairingPerson;
 }
 
 export interface PairingState {
@@ -70,7 +78,7 @@ export interface CancelResult {
  * is not stylistic here; unaliased columns are a correctness bug waiting to happen.
  */
 const REQUEST_COLUMNS = `r.id as request_id, r.status, r.created_at,
-  u.id as other_id, u.actual_name, u.nickname, u.avatar_key`;
+  u.id as other_id, u.actual_name, u.nickname, u.avatar_key, u.gender`;
 
 interface RequestRow {
   request_id: string;
@@ -80,6 +88,7 @@ interface RequestRow {
   actual_name: string;
   nickname: string;
   avatar_key: string;
+  gender: Gender;
 }
 
 function toRequest(row: RequestRow): PairingRequestSummary {
@@ -92,6 +101,7 @@ function toRequest(row: RequestRow): PairingRequestSummary {
       actualName: row.actual_name,
       nickname: row.nickname,
       avatarKey: row.avatar_key,
+      gender: row.gender,
     },
   };
 }
@@ -109,9 +119,10 @@ export function createPairingRepository(pool: Pool): PairingRepository {
       actual_name: string;
       nickname: string;
       avatar_key: string;
+      gender: Gender;
     }>(
       `select c.id, c.first_met_date, c.location_type,
-              u.id as partner_id, u.actual_name, u.nickname, u.avatar_key
+              u.id as partner_id, u.actual_name, u.nickname, u.avatar_key, u.gender
          from public.couples c
          join public.users u
            on u.id = case when c.user_a_id = $1 then c.user_b_id else c.user_a_id end
@@ -150,6 +161,7 @@ export function createPairingRepository(pool: Pool): PairingRepository {
               actualName: coupleRow.actual_name,
               nickname: coupleRow.nickname,
               avatarKey: coupleRow.avatar_key,
+              gender: coupleRow.gender,
             },
           }
         : null,
@@ -218,7 +230,8 @@ export function createPairingRepository(pool: Pool): PairingRepository {
           actual_name: string;
           nickname: string;
           avatar_key: string;
-        }>('select id, actual_name, nickname, avatar_key from public.users where id = $1', [
+          gender: Gender;
+        }>('select id, actual_name, nickname, avatar_key, gender from public.users where id = $1', [
           targetRow.id,
         ]);
 
@@ -235,6 +248,7 @@ export function createPairingRepository(pool: Pool): PairingRepository {
             actualName: otherRow.actual_name,
             nickname: otherRow.nickname,
             avatarKey: otherRow.avatar_key,
+            gender: otherRow.gender,
           },
         };
       } catch (error) {

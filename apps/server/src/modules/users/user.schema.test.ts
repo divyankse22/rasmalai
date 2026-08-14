@@ -9,6 +9,7 @@ const VALID = {
   nickname: 'Div',
   birthYear: 1996,
   avatarKey: 'fox',
+  gender: 'female',
   partnerLabelName: 'Anshuman',
   partnerLabelNickname: 'Anshu',
   firstMetDate: '2021-03-14',
@@ -69,6 +70,16 @@ describe('onboardingSchema', () => {
     expect(parse({ avatarKey: 'dragon' }).success).toBe(false);
     expect(parse({ locationType: 'mars' }).success).toBe(false);
     expect(parse({ locationType: 'prefer_not_to_say' }).success).toBe(true);
+  });
+
+  it('requires a gender, and only a known one', () => {
+    const { gender: _omitted, ...withoutGender } = VALID;
+    expect(schema.safeParse(withoutGender).success).toBe(false);
+
+    expect(parse({ gender: '' }).success).toBe(false);
+    expect(parse({ gender: 'unspecified' }).success).toBe(false);
+    expect(parse({ gender: 'male' }).success).toBe(true);
+    expect(parse({ gender: 'female' }).success).toBe(true);
   });
 
   it('reports every problem at once rather than one at a time', () => {
