@@ -10,6 +10,15 @@ coverage/
 .env.*.local
 !.env.example
 
+# Certificates are fetched per environment, never committed.
+*.crt
+*.pem
+
+# Local agent tooling and its generated files.
+.claude/
+apps/web/CLAUDE.md
+apps/web/AGENTS.md
+
 *.log
 npm-debug.log*
 .DS_Store

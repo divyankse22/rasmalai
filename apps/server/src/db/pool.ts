@@ -1,38 +1,18 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import pg from 'pg';
+import { resolveCertificateAuthority } from './certificateAuthority';
 import { logger } from '../logger';
 
 export type Database = pg.Pool;
-
-/**
- * Supabase terminates Postgres TLS with its own private CA ("Supabase Root 2021 CA"), which is not
- * in Node's trust store. The tempting fix - `rejectUnauthorized: false` - would encrypt the
- * connection while accepting *any* certificate, which is no protection at all on the link carrying
- * every couple's data. So we pin their root instead and keep full verification on.
- *
- * Replace this file with the copy from your project's Connect panel to be certain of its
- * provenance; `openssl x509 -in supabase/prod-ca.crt -noout -fingerprint -sha256` must match.
- */
-const CA_PATH = resolve(process.cwd(), '../../supabase/prod-ca.crt');
-
-function readCertificateAuthority(): string {
-  try {
-    return readFileSync(CA_PATH, 'utf8');
-  } catch {
-    throw new Error(
-      `Could not read the Supabase CA certificate at ${CA_PATH}. Download it from your project's ` +
-        'Connect panel and save it there. Refusing to connect without certificate verification.',
-    );
-  }
-}
 
 let pool: pg.Pool | undefined;
 
 export function createPool(connectionString: string): pg.Pool {
   const created = new pg.Pool({
     connectionString,
-    ssl: { ca: readCertificateAuthority(), rejectUnauthorized: true },
+    // Full verification against Supabase's pinned CA. `rejectUnauthorized: false` would keep the
+    // connection encrypted while accepting any certificate at all, which is no protection on the
+    // link carrying every couple's data.
+    ssl: { ca: resolveCertificateAuthority(process.env), rejectUnauthorized: true },
     // Small on purpose: one backend process serving 70-80 concurrent people needs very few
     // connections, and the shared pooler is happier when we are frugal.
     max: 10,
