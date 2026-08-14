@@ -1,7 +1,13 @@
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app';
-import { TEST_USER_ID, createInMemoryUsersRepository, stubVerifier } from '../testing';
+import {
+  TEST_USER_ID,
+  createInMemoryUsersRepository,
+  createRecordingNotifier,
+  createStubPairingRepository,
+  stubVerifier,
+} from '../testing';
 
 let server: Server;
 let baseUrl: string;
@@ -39,6 +45,8 @@ beforeEach(async () => {
     appOrigin: 'http://localhost:3000',
     verifier: stubVerifier,
     users,
+    pairing: createStubPairingRepository(),
+    realtime: createRecordingNotifier(),
   }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
 

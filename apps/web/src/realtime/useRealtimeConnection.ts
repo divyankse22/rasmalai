@@ -1,11 +1,22 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { EVENTS, createEnvelope, parseEnvelope, serializeEnvelope } from '@rasmalai/shared';
+import {
+  EVENTS,
+  createEnvelope,
+  parseEnvelope,
+  serializeEnvelope,
+  type Envelope,
+} from '@rasmalai/shared';
 import { publicEnv } from '@/lib/env';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'offline';
+
+export interface RealtimeOptions {
+  /** Called for every frame the server sends, once the socket is authenticated. */
+  onEvent?: (envelope: Envelope) => void;
+}
 
 const BASE_RETRY_MS = 500;
 const MAX_RETRY_MS = 10_000;
@@ -17,9 +28,16 @@ const MAX_RETRY_MS = 10_000;
  * server we are here - which means it lives at the dashboard level, not inside a game. Reconnection
  * backs off exponentially with jitter so a backend restart does not produce a stampede.
  */
-export function useRealtimeConnection(): ConnectionStatus {
+export function useRealtimeConnection({ onEvent }: RealtimeOptions = {}): ConnectionStatus {
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const socketRef = useRef<WebSocket | null>(null);
+
+  // Held in a ref so a changing callback never tears down and rebuilds the socket. Updated in an
+  // effect rather than during render, which concurrent rendering does not allow.
+  const onEventRef = useRef(onEvent);
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
   useEffect(() => {
     let disposed = false;
@@ -58,7 +76,10 @@ export function useRealtimeConnection(): ConnectionStatus {
         if (parsed.envelope.type === EVENTS.connection.authenticated) {
           attempt = 0;
           setStatus('connected');
+          return;
         }
+
+        onEventRef.current?.(parsed.envelope);
       });
 
       socket.addEventListener('close', () => {

@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { publicEnv } from '@/lib/env';
 
 /** Routes a signed-out visitor may see. Everything else redirects to the landing page. */
-const PROTECTED_PREFIXES = ['/dashboard', '/onboarding'];
+const PROTECTED_PREFIXES = ['/dashboard', '/onboarding', '/pairing'];
 
 /**
  * Refreshes the Supabase session cookie and performs the *optimistic* redirects.

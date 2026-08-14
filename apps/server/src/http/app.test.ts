@@ -1,7 +1,12 @@
 import type { Server } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from './app';
-import { createInMemoryUsersRepository, stubVerifier } from './testing';
+import {
+  createInMemoryUsersRepository,
+  createRecordingNotifier,
+  createStubPairingRepository,
+  stubVerifier,
+} from './testing';
 
 const APP_ORIGIN = 'http://localhost:3000';
 
@@ -13,6 +18,8 @@ beforeAll(async () => {
     appOrigin: APP_ORIGIN,
     verifier: stubVerifier,
     users: createInMemoryUsersRepository(),
+    pairing: createStubPairingRepository(),
+    realtime: createRecordingNotifier(),
   }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
 

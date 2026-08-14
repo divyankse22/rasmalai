@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { formatCalendarDate } from '../../db/calendarDate';
 import type { AvatarKey, LocationType, OnboardingInput } from './user.schema';
 
 export interface UserProfile {
@@ -46,21 +47,10 @@ function toProfile(row: UserRow): UserProfile {
     avatarKey: row.avatar_key,
     partnerLabelName: row.partner_label_name,
     partnerLabelNickname: row.partner_label_nickname,
-    // `date` comes back as a Date in the local timezone; take the calendar day, not an instant.
-    firstMetDate:
-      row.first_met_date instanceof Date
-        ? formatCalendarDate(row.first_met_date)
-        : String(row.first_met_date),
+    firstMetDate: formatCalendarDate(row.first_met_date),
     locationType: row.location_type,
     pairingCode: row.pairing_code,
   };
-}
-
-function formatCalendarDate(value: Date): string {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, '0');
-  const day = String(value.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 const COLUMNS = `id, actual_name, nickname, birth_year, avatar_key, partner_label_name,

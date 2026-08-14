@@ -46,3 +46,27 @@ export async function getMyProfile(): Promise<UserProfile | null> {
   const body = (await response.json()) as { profile: UserProfile | null };
   return body.profile;
 }
+
+export interface PairingPerson {
+  id: string;
+  actualName: string;
+  nickname: string;
+  avatarKey: string;
+}
+
+export interface PairingState {
+  couple: {
+    id: string;
+    firstMetDate: string;
+    locationType: string;
+    partner: PairingPerson;
+  } | null;
+  incoming: { id: string; otherUser: PairingPerson }[];
+  outgoing: { id: string; otherUser: PairingPerson }[];
+}
+
+export async function getPairingState(): Promise<PairingState | null> {
+  const response = await fetchFromApi('/api/pairing');
+  if (!response.ok) return null;
+  return (await response.json()) as PairingState;
+}

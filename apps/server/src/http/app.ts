@@ -2,8 +2,11 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { INTERNAL_ERROR } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
+import type { PairingRepository } from '../modules/pairing/pairingRepository';
 import type { UsersRepository } from '../modules/users/usersRepository';
+import type { RealtimeNotifier } from '../ws/notifier';
 import { logger } from '../logger';
+import { createPairingRouter } from './routes/pairing';
 import { createUsersRouter } from './routes/users';
 
 export interface AppOptions {
@@ -11,11 +14,13 @@ export interface AppOptions {
   appOrigin: string;
   verifier: TokenVerifier;
   users: UsersRepository;
+  pairing: PairingRepository;
+  realtime: RealtimeNotifier;
 }
 
 const startedAt = Date.now();
 
-export function createApp({ appOrigin, verifier, users }: AppOptions) {
+export function createApp({ appOrigin, verifier, users, pairing, realtime }: AppOptions) {
   const app = express();
 
   app.disable('x-powered-by');
@@ -35,6 +40,7 @@ export function createApp({ appOrigin, verifier, users }: AppOptions) {
   });
 
   app.use('/api', createUsersRouter(verifier, users));
+  app.use('/api', createPairingRouter(verifier, pairing, realtime));
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: { code: 'not_found', message: 'Unknown endpoint.' } });

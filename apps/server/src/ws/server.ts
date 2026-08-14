@@ -36,6 +36,11 @@ export interface WebSocketServerOptions {
   /** How long an anonymous socket may stay open before it is closed. */
   authTimeoutMs?: number;
   heartbeatIntervalMs?: number;
+  /**
+   * Supplied by the caller when the HTTP layer also needs to reach these sockets, since the app is
+   * constructed before the server the sockets attach to.
+   */
+  registry?: SocketRegistry;
 }
 
 export interface RealtimeServer {
@@ -53,10 +58,15 @@ export interface RealtimeServer {
  */
 export function attachWebSocketServer(
   server: Server,
-  { verifier, path = '/ws', authTimeoutMs = 10_000, heartbeatIntervalMs = 20_000 }: WebSocketServerOptions,
+  {
+    verifier,
+    path = '/ws',
+    authTimeoutMs = 10_000,
+    heartbeatIntervalMs = 20_000,
+    registry = new SocketRegistry(),
+  }: WebSocketServerOptions,
 ): RealtimeServer {
   const wss = new WebSocketServer({ server, path, maxPayload: MAX_ENVELOPE_BYTES });
-  const registry = new SocketRegistry();
   const states = new WeakMap<WebSocket, SocketState>();
 
   function send(socket: WebSocket, type: string, payload: unknown, requestId?: string): void {

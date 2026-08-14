@@ -6,7 +6,7 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: end of slice 3.
+Last updated: end of slice 4.
 
 ---
 
@@ -17,8 +17,8 @@ Last updated: end of slice 3.
 | 1 | Monorepo, tooling, design tokens, Docker, health endpoint | **done, verified** |
 | 2 | Supabase Google auth, guarded routes, authenticated socket | **done, verified** |
 | 3 | Onboarding, first migration, profiles, pairing codes | **done, verified** |
-| 4 | Pairing: codes, requests, accept/reject, permanent couple | next |
-| 5 | Couple dashboard | not started |
+| 4 | Pairing: codes, requests, accept/reject, permanent couple | **done, verified** |
+| 5 | Couple dashboard | next |
 | 6 | Realtime: invitations, TTL, lobby, ready, countdown, reactions | not started |
 | 7 | Reaction Speed (first game, end to end) | not started |
 | 7b | Four in a Row | not started |
@@ -26,7 +26,7 @@ Last updated: end of slice 3.
 | 9 | Tournaments | not started |
 | 10+ | Remaining games, mobile polish, deployment | not started |
 
-Gate at the time of writing: **74 tests passing**, typecheck, lint and both builds green
+Gate at the time of writing: **96 tests passing**, typecheck, lint and both builds green
 (`npm run verify`).
 
 ---
@@ -51,21 +51,33 @@ Next's bundler will not resolve `.js` to `.ts`.
 - WebSocket at `/ws`: identity is proven in the first frame, anonymous sockets are closed after
   10s, multiple sockets per user are allowed, expired tokens are dropped on the next heartbeat.
 - `requireUser` middleware: the user id comes from the verified token and nowhere else.
-- `GET /api/me`, `POST /api/onboarding`.
+- `GET /api/me`, `POST /api/onboarding`, `GET /api/pairing`, `POST /api/pairing/requests`,
+  `POST /api/pairing/requests/:id/respond`.
+- In-memory fixed-window rate limiting on pairing code submission, so a code cannot be ground down.
+- A notifier that lets HTTP routes push events to a person's open sockets, which is how an accept
+  reaches the other partner without polling.
 - Migration runner (`npm run db:migrate`): ordered `.sql` files, one transaction each, tracked in
   `public.schema_migrations`. Idempotent.
 
 ### Database
 
-`public.users` only, so far. Keyed to `auth.users.id` with `on delete cascade`. RLS enabled with
-**zero policies** — the deny-all backstop from `docs/13` section 2. The Google subject and email
-are deliberately *not* duplicated here; `auth.users` already holds them.
+`public.users`, `public.couples` and `public.pairing_requests`. Everything is keyed to
+`auth.users.id` with `on delete cascade`, and RLS is enabled with **zero policies** — the deny-all
+backstop from `docs/13` section 2. The Google subject and email are deliberately *not* duplicated
+here; `auth.users` already holds them.
+
+"At most one couple per person" is enforced by `users.couple_id`: a single column cannot hold two
+values, which unique indexes on the couples table alone could not guarantee. "One pending request
+per pair" is a partial unique index over the normalised pair, so it holds in either direction.
 
 ### Web
 
 Google sign-in via `@supabase/ssr` with httpOnly cookies, `proxy.ts` for optimistic redirects and
-cookie refresh, `getUser()` in pages for the authoritative check, onboarding form, dashboard
-showing avatar, days together and the pairing code.
+cookie refresh, `getUser()` in pages for the authoritative check, onboarding form, a pairing screen
+that updates itself when a request arrives or is answered, and a couple dashboard.
+
+Routing between them is by state, not by navigation: no profile sends you to `/onboarding`, no
+couple sends you to `/pairing`, and a couple sends you to `/dashboard`.
 
 The entire visual identity is `apps/web/src/design-system/theme.css`. Swap that file to reskin.
 
@@ -86,6 +98,11 @@ Not "it compiles" — these were actually run.
 - Full onboarding path against the real database: null profile → validation errors with field
   names → 201 with pairing code → read back → 409 on repeat → row confirmed in Postgres →
   cascade-deleted with the auth user.
+- Full pairing path with three real users: own code refused, unknown code refused, request
+  delivered over the partner's socket, duplicate and reverse-direction requests refused, neither
+  the requester nor a stranger able to answer, **two simultaneous accepts resolving to exactly one
+  couple (200 and 409)**, both sides agreeing on the partner and the date, and pairing proving
+  permanent afterwards.
 
 ---
 
@@ -101,8 +118,8 @@ Not "it compiles" — these were actually run.
    Certificate verification is fully on — `rejectUnauthorized: false` was deliberately not used.
 3. **The Email auth provider is still enabled** on the Supabase project, leaving an
    email/password signup path open on a product that is meant to be Google-only and invisible.
-4. **The browser sign-in flow has not been exercised by a human.** Everything underneath it is
-   proven, but nobody has clicked through the Google consent screen yet.
+4. **The browser pairing UI has not been exercised by a human.** Sign-in and onboarding have been
+   (two real Google accounts are in the database); the pairing screens themselves have not.
 5. **`apps/web/AGENTS.md` and `apps/web/CLAUDE.md` are generated by `next dev`**, not hand-written.
    Committing them keeps the working tree clean.
 

@@ -4,21 +4,30 @@ import { loadEnv } from './config/env';
 import { closePool, getPool } from './db/pool';
 import { createApp } from './http/app';
 import { logger } from './logger';
+import { createPairingRepository } from './modules/pairing/pairingRepository';
 import { createUsersRepository } from './modules/users/usersRepository';
+import { createNotifier } from './ws/notifier';
 import { attachWebSocketServer } from './ws/server';
+import { SocketRegistry } from './ws/socketRegistry';
 
 const env = loadEnv();
 const verifier = createSupabaseTokenVerifier(env.NEXT_PUBLIC_SUPABASE_URL);
 const pool = getPool(env.DATABASE_URL);
 
+// The registry is built first because the HTTP layer needs to reach sockets, and the app has to
+// exist before the server those sockets attach to.
+const registry = new SocketRegistry();
+
 const app = createApp({
   appOrigin: env.APP_ORIGIN,
   verifier,
   users: createUsersRepository(pool),
+  pairing: createPairingRepository(pool),
+  realtime: createNotifier(registry),
 });
 const server = createServer(app);
 
-const realtime = attachWebSocketServer(server, { verifier });
+const realtime = attachWebSocketServer(server, { verifier, registry });
 
 server.listen(env.PORT, () => {
   logger.info({ port: env.PORT, env: env.NODE_ENV }, 'rasmalai server listening');
