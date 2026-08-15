@@ -9,6 +9,8 @@ import type {
 import {
   PairingError,
   type CancelResult,
+  type CoupleDetails,
+  type PairingCodeLookup,
   type PairingRepository,
   type PairingRequestSummary,
   type PairingState,
@@ -16,8 +18,10 @@ import {
 } from '../modules/pairing/pairingRepository';
 import type { OnboardingInput } from '../modules/users/user.schema';
 import {
+  OnboardingPairingError,
   PairingCodeTakenError,
   ProfileExistsError,
+  type CreateResult,
   type UserProfile,
   type UsersRepository,
 } from '../modules/users/usersRepository';
@@ -51,23 +55,59 @@ export const stubVerifier: TokenVerifier = {
   },
 };
 
+/** A profile with plausible answers, so a test only states the fields it cares about. */
+export function testProfile(overrides: Partial<UserProfile> & { id: string }): UserProfile {
+  return {
+    nickname: 'Div',
+    birthYear: 1996,
+    avatarKey: 'fox',
+    gender: 'female',
+    partnerLabelNickname: 'Anshu',
+    firstMetDate: '2021-03-14',
+    locationType: 'different_city',
+    pairingCode: 'SEEDCODE',
+    ...overrides,
+  };
+}
+
 export function createInMemoryUsersRepository(): UsersRepository & {
   seedCodeCollisions(n: number): void;
+  /** Puts somebody in the table already, so a sign-up has a code to arrive holding. */
+  seedUser(profile: UserProfile): void;
+  /** Marks a seeded person as spoken for, which is what makes their code unusable. */
+  markPaired(userId: string): void;
+  requests: { requesterUserId: string; targetUserId: string }[];
 } {
   const byId = new Map<string, UserProfile>();
   const usedCodes = new Set<string>();
+  const paired = new Set<string>();
   let forcedCollisions = 0;
 
-  return {
+  const repository = {
+    requests: [] as { requesterUserId: string; targetUserId: string }[],
+
     seedCodeCollisions(n: number) {
       forcedCollisions = n;
+    },
+
+    seedUser(profile: UserProfile) {
+      byId.set(profile.id, profile);
+      usedCodes.add(profile.pairingCode);
+    },
+
+    markPaired(userId: string) {
+      paired.add(userId);
     },
 
     async findById(userId: string) {
       return byId.get(userId) ?? null;
     },
 
-    async create(userId: string, input: OnboardingInput, pairingCode: string) {
+    async create(
+      userId: string,
+      input: OnboardingInput,
+      pairingCode: string,
+    ): Promise<CreateResult> {
       if (byId.has(userId)) throw new ProfileExistsError('profile already exists');
 
       if (forcedCollisions > 0) {
@@ -76,24 +116,53 @@ export function createInMemoryUsersRepository(): UsersRepository & {
       }
       if (usedCodes.has(pairingCode)) throw new PairingCodeTakenError('pairing code already taken');
 
+      // Mirrors the real transaction: the code is resolved *before* the profile is written, so a
+      // sign-up that cannot pair leaves nothing behind and can be retried.
+      let owner: UserProfile | undefined;
+      if (input.pairingCode) {
+        owner = [...byId.values()].find((user) => user.pairingCode === input.pairingCode);
+        if (!owner) {
+          throw new OnboardingPairingError('code_not_found', 'We could not find that code.');
+        }
+        if (paired.has(owner.id)) {
+          throw new OnboardingPairingError(
+            'partner_already_paired',
+            'They are already paired with someone.',
+          );
+        }
+        if (owner.firstMetDate === null && input.firstMetDate === undefined) {
+          throw new OnboardingPairingError(
+            'needs_couple_details',
+            'We still need the day you two met.',
+          );
+        }
+      }
+
       usedCodes.add(pairingCode);
       const profile: UserProfile = {
         id: userId,
-        actualName: input.actualName,
         nickname: input.nickname,
         birthYear: input.birthYear,
         avatarKey: input.avatarKey,
         gender: input.gender,
-        partnerLabelName: input.partnerLabelName,
         partnerLabelNickname: input.partnerLabelNickname,
-        firstMetDate: input.firstMetDate,
-        locationType: input.locationType,
+        firstMetDate: input.firstMetDate ?? null,
+        locationType: input.locationType ?? null,
         pairingCode,
       };
       byId.set(userId, profile);
-      return profile;
+
+      if (!owner) return { profile, request: null };
+
+      repository.requests.push({ requesterUserId: userId, targetUserId: owner.id });
+      return {
+        profile,
+        request: { requestId: `request-${repository.requests.length}`, targetUserId: owner.id },
+      };
     },
   };
+
+  return repository;
 }
 
 export interface SentEvent {
@@ -132,10 +201,19 @@ const emptyState: PairingState = { couple: null, incoming: [], outgoing: [] };
 export function createStubPairingRepository(): PairingRepository & {
   failWith(error: PairingError | null): void;
   state: PairingState;
+  lookup: PairingCodeLookup;
+  detailsSeen: CoupleDetails | undefined;
 } {
   let failure: PairingError | null = null;
   const stub = {
     state: structuredClone(emptyState) as PairingState,
+    lookup: {
+      status: 'ok',
+      needsCoupleDetails: false,
+      owner: { id: OTHER_USER_ID, nickname: 'Other', avatarKey: 'fox', gender: 'female' },
+    } as PairingCodeLookup,
+    /** What the last request carried, so a test can prove the couple answers were forwarded. */
+    detailsSeen: undefined as CoupleDetails | undefined,
 
     failWith(error: PairingError | null) {
       failure = error;
@@ -145,18 +223,26 @@ export function createStubPairingRepository(): PairingRepository & {
       return stub.state;
     },
 
-    async requestByCode(_requesterId: string, code: string): Promise<PairingRequestSummary> {
+    async lookupCode(): Promise<PairingCodeLookup> {
+      return stub.lookup;
+    },
+
+    async requestByCode(
+      _requesterId: string,
+      code: string,
+      details?: CoupleDetails,
+    ): Promise<PairingRequestSummary> {
       if (failure) throw failure;
       if (code !== 'GOODCODE') {
         throw new PairingError('code_not_found', 'We could not find that code.');
       }
+      stub.detailsSeen = details;
       return {
         id: 'request-1',
         status: 'pending',
         createdAt: new Date().toISOString(),
         otherUser: {
           id: OTHER_USER_ID,
-          actualName: 'Other Person',
           nickname: 'Other',
           avatarKey: 'fox',
           gender: 'female',
@@ -180,7 +266,6 @@ export function createStubPairingRepository(): PairingRepository & {
                 locationType: 'different_city',
                 partner: {
                   id: OTHER_USER_ID,
-                  actualName: 'Other Person',
                   nickname: 'Other',
                   avatarKey: 'fox',
                   gender: 'female',
@@ -248,7 +333,9 @@ export function createStubDashboardRepository(): DashboardRepository & {
 }
 
 /** A catalogue row with everything at zero, so a test only states the fields it cares about. */
-export function testCatalogueRow(overrides: Partial<CatalogueRow> & { slug: string }): CatalogueRow {
+export function testCatalogueRow(
+  overrides: Partial<CatalogueRow> & { slug: string },
+): CatalogueRow {
   return {
     name: overrides.slug,
     description: 'A game.',

@@ -1,18 +1,22 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
-import { EVENTS } from '@rasmalai/shared';
+import { EVENTS, LOCATION_TYPES } from '@rasmalai/shared';
 import type { TokenVerifier } from '../../auth/tokenVerifier';
 import { logger } from '../../logger';
-import {
-  PairingError,
-  type PairingRepository,
-} from '../../modules/pairing/pairingRepository';
+import { PairingError, type PairingRepository } from '../../modules/pairing/pairingRepository';
 import { normalisePairingCode } from '../../modules/users/pairingCode';
 import type { RealtimeNotifier } from '../../ws/notifier';
-import { rateLimit } from '../rateLimit';
 import { requireUser } from '../requireUser';
 
-const requestBody = z.object({ code: z.string().min(1).max(32) });
+const requestBody = z.object({
+  code: z.string().min(1).max(32),
+  // Only consulted when neither of them has ever answered; see `requestByCode`.
+  firstMetDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  locationType: z.enum(LOCATION_TYPES).optional(),
+});
 const respondBody = z.object({ accept: z.boolean() });
 
 /** Which pairing failures are the caller's fault, and what status each deserves. */
@@ -25,12 +29,15 @@ const STATUS_BY_CODE: Record<string, number> = {
   request_incoming_pending: 409,
   request_not_found: 404,
   request_not_pending: 409,
+  needs_couple_details: 400,
 };
 
 export function createPairingRouter(
   verifier: TokenVerifier,
   pairing: PairingRepository,
   realtime: RealtimeNotifier,
+  /** Shared with `POST /api/onboarding`, which spends the same secret. */
+  pairingCodeLimit: RequestHandler,
 ): Router {
   const router = Router();
   router.use(requireUser(verifier));
@@ -39,10 +46,25 @@ export function createPairingRouter(
     res.json(await pairing.getState(req.userId!));
   });
 
+  /**
+   * Reports on a code without spending it, so the onboarding wizard can show who it belongs to
+   * before anyone commits. It costs the *same* budget as sending a request — a check that were
+   * cheaper than the thing it precedes would just be the grinding oracle the limit exists to stop.
+   */
+  router.get('/pairing/codes/:code', pairingCodeLimit, async (req: Request, res: Response) => {
+    const code = req.params.code;
+    if (typeof code !== 'string' || code.length > 32) {
+      res.status(400).json({ error: { code: 'invalid_payload', message: 'Unknown code.' } });
+      return;
+    }
+
+    res.json(await pairing.lookupCode(req.userId!, normalisePairingCode(code)));
+  });
+
   router.post(
     '/pairing/requests',
     // A code is 8 characters from a 32-character alphabet; this makes grinding it pointless.
-    rateLimit({ limit: 10, windowMs: 10 * 60 * 1000 }),
+    pairingCodeLimit,
     async (req: Request, res: Response) => {
       const parsed = requestBody.safeParse(req.body);
       if (!parsed.success) {
@@ -52,9 +74,16 @@ export function createPairingRouter(
         return;
       }
 
+      const { firstMetDate, locationType } = parsed.data;
+      const details = firstMetDate && locationType ? { firstMetDate, locationType } : undefined;
+
       const userId = req.userId!;
       try {
-        const request = await pairing.requestByCode(userId, normalisePairingCode(parsed.data.code));
+        const request = await pairing.requestByCode(
+          userId,
+          normalisePairingCode(parsed.data.code),
+          details,
+        );
 
         // Both parties, so a second device belonging to either one stays in step.
         realtime.sendToUsers([request.otherUser.id, userId], EVENTS.pairing.requestCreated, {

@@ -6,7 +6,8 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: end of slice 7.
+Last updated: end of slice 7, plus the onboarding rework described under "Onboarding has two
+branches" below.
 
 ---
 
@@ -26,9 +27,44 @@ Last updated: end of slice 7.
 | 9 | Tournaments | not started |
 | 10+ | Remaining games, mobile polish, deployment | not started |
 
-Gate at the time of writing: **264 tests passing**, typecheck, lint and both builds green
+Gate at the time of writing: **285 tests passing**, typecheck, lint and both builds green
 (`npm run verify`), plus **49 realtime checks** against real sockets and real Postgres, and a full
 match played in a browser against a live partner.
+
+---
+
+## Onboarding has two branches
+
+Onboarding used to be one page of nine inputs that asked **both** partners when they met and where
+they live, then threw one of the two answers away — `couples` keeps a single copy, so the loser's
+answer sat in their row contradicting the couple, and "days together" came down to which of them
+happened to send the pairing request.
+
+It now opens by asking whether you already have your partner's code:
+
+- **with a code** — 7 cards: the question, the code, your name, what you call them, your gender,
+  your birth year, your avatar. Finishing creates the profile **and sends the pairing request in
+  one transaction**, landing on the waiting screen. You are never asked the couple's questions.
+- **without one** — 8 cards: the same, minus the code, plus the day you met and where you two are.
+  You leave with a code to share.
+
+One question per card; each answered card slides left as the next arrives. Off-screen cards are
+`inert`, so Tab cannot wander into them. The code card checks the code as it is typed and names its
+owner — "That's 🦊 Alice — is that them?" — before Next unlocks; verdicts are remembered per code so
+a corrected typo does not spend a second try against the rate limit.
+
+`0006_onboarding_branches.sql` drops `not null` from four `users` columns:
+
+- `first_met_date`, `location_type` — null means "this person was never the author of this fact".
+  `couples.first_met_date` stays **not null**; that is what guarantees a couple has exactly one
+  agreed date. Accepting resolves it as `coalesce(code owner, requester)`.
+- `actual_name`, `partner_label_name` — retired, not dropped. Existing rows keep what they said and
+  nothing selects them any more. Each person now gives one name for themselves (`nickname`, which
+  is what every screen already rendered) and one label for their partner.
+
+One budget of 10 per 10 minutes is shared by `POST /api/onboarding`, `GET /api/pairing/codes/:code`
+and `POST /api/pairing/requests`: all three spend the same secret, and a check cheaper than the
+request it precedes would be exactly the grinding oracle the limit exists to stop.
 
 ---
 
@@ -253,6 +289,21 @@ Not "it compiles" — these were actually run.
 - Full onboarding path against the real database: null profile → validation errors with field
   names → 201 with pairing code → read back → 409 on repeat → row confirmed in Postgres →
   cascade-deleted with the auth user.
+- **Both onboarding branches, end to end against the real backend and real Postgres**, with two
+  throwaway Supabase users: A signs up with no code and authors the couple's answers; the code
+  check resolves to A and reports that B need not be asked; B signs up holding the code, gets a
+  profile and a pairing request from one call, and has `first_met_date` and `location_type` **null**
+  in their own row; A accepts; `couples.first_met_date` is A's date, the only one anybody gave, and
+  B's own view of the couple shows it too.
+- **Both branches walked in a browser**, one card at a time: the cards slide, the dot counter
+  changes from 7 to 8 with the branch, Enter advances and focus follows to the next card, a choice
+  tap both answers and advances, and the final card's button reads "All done ❤️" while earlier ones
+  read "Next →". `1qj ct7-fy` was accepted as `1QJCT7FY` and confirmed as "That's 🦊 Alice — is that
+  them?" before Next unlocked. Finishing with a code landed on "Waiting for Alice to accept…";
+  finishing without one landed on the code-sharing screen. After accepting, the dashboard read
+  "2,612 days together" — computed from A's date, which is the whole point of the change.
+- **`inert` measured in the page, not assumed**: on an 8-card wizard, 7 panels carried `inert` and
+  the only focusable controls in the document were the active card's input plus Back and Next.
 - Full pairing path with three real users: own code refused, unknown code refused, request
   delivered over the partner's socket, duplicate and reverse-direction requests refused, neither
   the requester nor a stranger able to answer, **two simultaneous accepts resolving to exactly one
@@ -381,6 +432,17 @@ Not "it compiles" — these were actually run.
    reconnect.** Everything else is restored by asking for the session again. Losing that single
    frame costs a confirmation, not a tap: the server has already recorded it, and the round result
    shows it.
+14. **Checking a code reveals its owner's nickname, avatar and gender without telling them.**
+   Before, you only learned who a code belonged to *after* sending a request, which they see.
+   Deliberate: confirming the right person before committing is most of what the card is for, and
+   an 8-character code from a 32-character alphabet behind a shared 10-per-10-minutes limit makes
+   fishing for one pointless. If it ever stops feeling right, the endpoint can return bare
+   `{ found, needsCoupleDetails }` and the card can just say "Found them ✓".
+15. **The both-joined-by-code path was proved by unit test, not by hand.** If two people each
+   signed up holding a code and each were turned down, neither ever answered the couple's
+   questions; `requestByCode` then refuses with `needs_couple_details` and the pairing panel asks
+   for them inline. Reaching that state in a browser needs four accounts and two rejections, so it
+   has route- and schema-level coverage only.
 
 ---
 

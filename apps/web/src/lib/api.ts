@@ -5,15 +5,14 @@ export type Gender = 'male' | 'female';
 
 export interface UserProfile {
   id: string;
-  actualName: string;
   nickname: string;
   birthYear: number;
   avatarKey: string;
   gender: Gender;
-  partnerLabelName: string;
   partnerLabelNickname: string;
-  firstMetDate: string;
-  locationType: string;
+  /** Null for whoever signed up holding a code: their partner is the author of these two. */
+  firstMetDate: string | null;
+  locationType: string | null;
   pairingCode: string;
 }
 
@@ -53,7 +52,6 @@ export async function getMyProfile(): Promise<UserProfile | null> {
 
 export interface PairingPerson {
   id: string;
-  actualName: string;
   nickname: string;
   avatarKey: string;
   gender: Gender;

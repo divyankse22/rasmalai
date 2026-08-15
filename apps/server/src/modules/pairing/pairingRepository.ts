@@ -2,13 +2,34 @@ import type { Pool } from 'pg';
 import { formatCalendarDate } from '../../db/calendarDate';
 import type { Gender, LocationType } from '../users/user.schema';
 
-/** What either partner is allowed to see about the other. */
+/**
+ * What either partner is allowed to see about the other.
+ *
+ * `actualName` used to sit here too, and was the one place it was ever rendered. 0006 stopped
+ * collecting it — a person now gives one name — so the pairing screen shows that name instead.
+ */
 export interface PairingPerson {
   id: string;
-  actualName: string;
   nickname: string;
   avatarKey: string;
   gender: Gender;
+}
+
+/** Couple facts, which exactly one of the two ever answers. */
+export interface CoupleDetails {
+  firstMetDate: string;
+  locationType: LocationType;
+}
+
+/** What the wizard learns about a code before it commits someone to using it. */
+export interface PairingCodeLookup {
+  status: 'ok' | 'not_found' | 'self' | 'already_paired';
+  /**
+   * True when the code's owner joined by code themselves and was turned down, so nobody has ever
+   * answered the couple's questions. Whoever uses this code has to answer them instead.
+   */
+  needsCoupleDetails: boolean;
+  owner: PairingPerson | null;
 }
 
 export interface PairingRequestSummary {
@@ -41,7 +62,8 @@ export class PairingError extends Error {
       | 'request_already_pending'
       | 'request_incoming_pending'
       | 'request_not_found'
-      | 'request_not_pending',
+      | 'request_not_pending'
+      | 'needs_couple_details',
     message: string,
   ) {
     super(message);
@@ -57,7 +79,17 @@ export interface RespondResult {
 
 export interface PairingRepository {
   getState(userId: string): Promise<PairingState>;
-  requestByCode(requesterId: string, pairingCode: string): Promise<PairingRequestSummary>;
+  /** Reports on a code without acting on it, so the wizard can confirm the person first. */
+  lookupCode(viewerId: string, pairingCode: string): Promise<PairingCodeLookup>;
+  /**
+   * `details` are only consulted when neither party has ever answered the couple's questions,
+   * which happens when both of them joined by code and were turned down.
+   */
+  requestByCode(
+    requesterId: string,
+    pairingCode: string,
+    details?: CoupleDetails,
+  ): Promise<PairingRequestSummary>;
   respond(userId: string, requestId: string, accept: boolean): Promise<RespondResult>;
   /** Withdraws a request the caller sent. Only the requester may do this. */
   cancel(userId: string, requestId: string): Promise<CancelResult>;
@@ -78,14 +110,13 @@ export interface CancelResult {
  * is not stylistic here; unaliased columns are a correctness bug waiting to happen.
  */
 const REQUEST_COLUMNS = `r.id as request_id, r.status, r.created_at,
-  u.id as other_id, u.actual_name, u.nickname, u.avatar_key, u.gender`;
+  u.id as other_id, u.nickname, u.avatar_key, u.gender`;
 
 interface RequestRow {
   request_id: string;
   status: PairingRequestSummary['status'];
   created_at: Date;
   other_id: string;
-  actual_name: string;
   nickname: string;
   avatar_key: string;
   gender: Gender;
@@ -98,7 +129,6 @@ function toRequest(row: RequestRow): PairingRequestSummary {
     createdAt: row.created_at.toISOString(),
     otherUser: {
       id: row.other_id,
-      actualName: row.actual_name,
       nickname: row.nickname,
       avatarKey: row.avatar_key,
       gender: row.gender,
@@ -107,22 +137,18 @@ function toRequest(row: RequestRow): PairingRequestSummary {
 }
 
 export function createPairingRepository(pool: Pool): PairingRepository {
-  async function readState(
-    executor: Pick<Pool, 'query'>,
-    userId: string,
-  ): Promise<PairingState> {
+  async function readState(executor: Pick<Pool, 'query'>, userId: string): Promise<PairingState> {
     const couple = await executor.query<{
       id: string;
       first_met_date: Date;
       location_type: LocationType;
       partner_id: string;
-      actual_name: string;
       nickname: string;
       avatar_key: string;
       gender: Gender;
     }>(
       `select c.id, c.first_met_date, c.location_type,
-              u.id as partner_id, u.actual_name, u.nickname, u.avatar_key, u.gender
+              u.id as partner_id, u.nickname, u.avatar_key, u.gender
          from public.couples c
          join public.users u
            on u.id = case when c.user_a_id = $1 then c.user_b_id else c.user_a_id end
@@ -158,7 +184,6 @@ export function createPairingRepository(pool: Pool): PairingRepository {
             locationType: coupleRow.location_type,
             partner: {
               id: coupleRow.partner_id,
-              actualName: coupleRow.actual_name,
               nickname: coupleRow.nickname,
               avatarKey: coupleRow.avatar_key,
               gender: coupleRow.gender,
@@ -175,13 +200,51 @@ export function createPairingRepository(pool: Pool): PairingRepository {
       return readState(pool, userId);
     },
 
-    async requestByCode(requesterId, pairingCode) {
+    async lookupCode(viewerId, pairingCode) {
+      const { rows } = await pool.query<{
+        id: string;
+        couple_id: string | null;
+        first_met_date: Date | null;
+        nickname: string;
+        avatar_key: string;
+        gender: Gender;
+      }>(
+        `select id, couple_id, first_met_date, nickname, avatar_key, gender
+           from public.users where pairing_code = $1`,
+        [pairingCode],
+      );
+
+      const row = rows[0];
+      const nothing = { needsCoupleDetails: false, owner: null } as const;
+
+      if (!row) return { status: 'not_found', ...nothing };
+      if (row.id === viewerId) return { status: 'self', ...nothing };
+      if (row.couple_id !== null) return { status: 'already_paired', ...nothing };
+
+      return {
+        status: 'ok',
+        needsCoupleDetails: row.first_met_date === null,
+        owner: {
+          id: row.id,
+          nickname: row.nickname,
+          avatarKey: row.avatar_key,
+          gender: row.gender,
+        },
+      };
+    },
+
+    async requestByCode(requesterId, pairingCode, details) {
       const client = await pool.connect();
       try {
         await client.query('begin');
 
-        const target = await client.query<{ id: string; couple_id: string | null }>(
-          'select id, couple_id from public.users where pairing_code = $1 for update',
+        const target = await client.query<{
+          id: string;
+          couple_id: string | null;
+          first_met_date: Date | null;
+        }>(
+          `select id, couple_id, first_met_date from public.users
+            where pairing_code = $1 for update`,
           [pairingCode],
         );
         const targetRow = target.rows[0];
@@ -195,13 +258,35 @@ export function createPairingRepository(pool: Pool): PairingRepository {
           throw new PairingError('partner_already_paired', 'They are already paired with someone.');
         }
 
-        const requester = await client.query<{ couple_id: string | null }>(
-          'select couple_id from public.users where id = $1 for update',
-          [requesterId],
-        );
+        const requester = await client.query<{
+          couple_id: string | null;
+          first_met_date: Date | null;
+        }>('select couple_id, first_met_date from public.users where id = $1 for update', [
+          requesterId,
+        ]);
+        const requesterRow = requester.rows[0];
         // couple_id is a uuid when set, so truthiness covers both null and a missing row.
-        if (requester.rows[0]?.couple_id) {
+        if (requesterRow?.couple_id) {
           throw new PairingError('already_paired', 'You are already paired.');
+        }
+
+        // Both of them joined by code and were turned down, so neither has ever answered the
+        // couple's questions and accepting would have nothing to put in `couples.first_met_date`.
+        // Asking now, from the person taking the initiative, is the only moment either of them is
+        // here to answer.
+        const requesterAnswered =
+          requesterRow !== undefined && requesterRow.first_met_date !== null;
+        if (targetRow.first_met_date === null && !requesterAnswered) {
+          if (!details) {
+            throw new PairingError(
+              'needs_couple_details',
+              'One of you needs to tell us the day you met.',
+            );
+          }
+          await client.query(
+            'update public.users set first_met_date = $2, location_type = $3 where id = $1',
+            [requesterId, details.firstMetDate, details.locationType],
+          );
         }
 
         // If they already asked us, entering their code is a dead end - the only thing that can
@@ -227,11 +312,10 @@ export function createPairingRepository(pool: Pool): PairingRepository {
 
         const other = await client.query<{
           id: string;
-          actual_name: string;
           nickname: string;
           avatar_key: string;
           gender: Gender;
-        }>('select id, actual_name, nickname, avatar_key, gender from public.users where id = $1', [
+        }>('select id, nickname, avatar_key, gender from public.users where id = $1', [
           targetRow.id,
         ]);
 
@@ -245,7 +329,6 @@ export function createPairingRepository(pool: Pool): PairingRepository {
           createdAt: row.created_at.toISOString(),
           otherUser: {
             id: otherRow.id,
-            actualName: otherRow.actual_name,
             nickname: otherRow.nickname,
             avatarKey: otherRow.avatar_key,
             gender: otherRow.gender,
@@ -350,17 +433,43 @@ export function createPairingRepository(pool: Pool): PairingRepository {
           throw new PairingError('already_paired', 'One of you is already paired.');
         }
 
-        // P-2: the couple inherits the requester's onboarding answers.
-        const seed = await client.query<{ first_met_date: Date; location_type: LocationType }>(
-          'select first_met_date, location_type from public.users where id = $1',
-          [row.requester_user_id],
+        // P-2: the couple's facts have exactly one author, and it is the person whose code was
+        // used. They are the one who got here first and was asked; whoever arrived holding their
+        // code was never asked at all, and their columns are null.
+        //
+        // coalesce, rather than reading the target alone, keeps the older path working: two people
+        // who both onboarded before either had a code have both answered, and the code's owner
+        // still wins. It only falls through when the owner genuinely never said.
+        const seed = await client.query<{
+          first_met_date: Date | null;
+          location_type: LocationType | null;
+        }>(
+          `select coalesce(owner.first_met_date, joiner.first_met_date) as first_met_date,
+                  coalesce(owner.location_type, joiner.location_type)   as location_type
+             from public.users owner, public.users joiner
+            where owner.id = $1 and joiner.id = $2`,
+          [row.target_user_id, row.requester_user_id],
         );
         const seedRow = seed.rows[0]!;
+        // `couples.first_met_date` is NOT NULL and stays that way. requestByCode refuses to create
+        // a request when neither party has answered, so arriving here without a date means that
+        // guard has a hole — worth failing on rather than inventing a day they met.
+        if (seedRow.first_met_date === null || seedRow.location_type === null) {
+          throw new PairingError(
+            'needs_couple_details',
+            'One of you needs to tell us the day you met.',
+          );
+        }
 
         const couple = await client.query<{ id: string }>(
           `insert into public.couples (user_a_id, user_b_id, first_met_date, location_type)
            values ($1, $2, $3, $4) returning id`,
-          [row.requester_user_id, row.target_user_id, seedRow.first_met_date, seedRow.location_type],
+          [
+            row.requester_user_id,
+            row.target_user_id,
+            seedRow.first_met_date,
+            seedRow.location_type,
+          ],
         );
         const coupleId = couple.rows[0]!.id;
 

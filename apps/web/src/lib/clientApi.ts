@@ -8,6 +8,8 @@ export interface ApiFailure {
   message: string;
   /** The backend's machine-readable reason, when it gave one. */
   reason?: string;
+  /** Per-field messages, keyed by the field that caused them. Forms point at the right input. */
+  fields?: Record<string, string>;
   status?: number;
 }
 
@@ -44,18 +46,19 @@ export async function postToApi<T>(path: string, body: unknown = {}): Promise<Ap
     });
 
     const payload = (await response.json().catch(() => ({}))) as {
-      error?: { message?: string; reason?: string };
+      error?: { message?: string; reason?: string; fields?: Record<string, string> };
     };
 
     if (!response.ok) {
-      const reason = payload.error?.reason;
+      const { reason, fields } = payload.error ?? {};
       return {
         ok: false,
         error: {
           message: payload.error?.message ?? 'That did not work.',
           // Spread rather than assigned: `exactOptionalPropertyTypes` distinguishes an absent
-          // property from one explicitly set to undefined, and this one is genuinely absent.
+          // property from one explicitly set to undefined, and these are genuinely absent.
           ...(reason === undefined ? {} : { reason }),
+          ...(fields === undefined ? {} : { fields }),
           status: response.status,
         },
       };

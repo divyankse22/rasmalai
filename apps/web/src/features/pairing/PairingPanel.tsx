@@ -5,8 +5,10 @@ import { useCallback, useState, type FormEvent } from 'react';
 import { EVENTS } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
+import { SelectField, TextField } from '@/design-system/Field';
 import { PersonName, type Gender } from '@/design-system/PersonName';
 import { avatarGlyph } from '@/features/onboarding/avatars';
+import { LOCATION_OPTIONS } from '@/features/onboarding/steps';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
@@ -14,7 +16,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 export interface PairingRequestView {
   id: string;
-  otherUser: { id: string; actualName: string; nickname: string; avatarKey: string; gender: Gender };
+  otherUser: { id: string; nickname: string; avatarKey: string; gender: Gender };
 }
 
 const PAIRING_EVENTS = new Set<string>([
@@ -37,6 +39,9 @@ export function PairingPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [copied, setCopied] = useState(false);
+  // Both of you signed up holding a code and were turned down, so neither was ever asked when you
+  // met. The couple record cannot exist without an answer, so it is asked here instead.
+  const [needsCoupleDetails, setNeedsCoupleDetails] = useState(false);
 
   // A request arriving, or being answered, changes what this page should show. Refreshing the
   // server component is enough - no duplicate client-side copy of the state to keep in sync.
@@ -54,7 +59,7 @@ export function PairingPanel({
   // reconnect closes that window without any polling.
   useResyncOnReconnect(useCallback(() => router.refresh(), [router]));
 
-  async function post(path: string, body: unknown): Promise<boolean> {
+  async function post(path: string, body: unknown): Promise<{ ok: boolean; reason?: string }> {
     setBusy(true);
     setError(undefined);
     try {
@@ -64,7 +69,7 @@ export function PairingPanel({
       } = await supabase.auth.getSession();
       if (!session) {
         router.push('/');
-        return false;
+        return { ok: false };
       }
 
       const response = await fetch(`${API_BASE}${path}`, {
@@ -78,15 +83,17 @@ export function PairingPanel({
 
       if (response.ok) {
         router.refresh();
-        return true;
+        return { ok: true };
       }
 
-      const payload = (await response.json()) as { error?: { message?: string } };
+      const payload = (await response.json()) as {
+        error?: { message?: string; reason?: string };
+      };
       setError(payload.error?.message ?? 'That did not work.');
-      return false;
+      return { ok: false, ...(payload.error?.reason ? { reason: payload.error.reason } : {}) };
     } catch {
       setError('Could not reach Rasmalai. Check your connection.');
-      return false;
+      return { ok: false };
     } finally {
       setBusy(false);
     }
@@ -98,9 +105,23 @@ export function PairingPanel({
     // Hold the form element now: the browser clears `currentTarget` once dispatch finishes, so
     // reading it after the await below would be null and throw on .reset().
     const form = event.currentTarget;
-    const code = String(new FormData(form).get('code') ?? '');
+    const data = new FormData(form);
+    const firstMetDate = String(data.get('firstMetDate') ?? '');
+    const locationType = String(data.get('locationType') ?? '');
 
-    if (await post('/api/pairing/requests', { code })) form.reset();
+    const result = await post('/api/pairing/requests', {
+      code: String(data.get('code') ?? ''),
+      // Only sent once the server has said it needs them, which is the rare case where both of
+      // you joined by code and neither was ever asked.
+      ...(firstMetDate && locationType ? { firstMetDate, locationType } : {}),
+    });
+
+    if (result.ok) {
+      form.reset();
+      setNeedsCoupleDetails(false);
+      return;
+    }
+    if (result.reason === 'needs_couple_details') setNeedsCoupleDetails(true);
   }
 
   async function copyCode() {
@@ -130,10 +151,7 @@ export function PairingPanel({
                   {avatarGlyph(request.otherUser.avatarKey)}
                 </span>
                 <p className="text-ink">
-                  <PersonName
-                    name={request.otherUser.actualName}
-                    gender={request.otherUser.gender}
-                  />{' '}
+                  <PersonName name={request.otherUser.nickname} gender={request.otherUser.gender} />{' '}
                   wants to pair with you ❤️
                 </p>
               </div>
@@ -181,7 +199,7 @@ export function PairingPanel({
         // Entering their code here could only ever fail: they have already asked, so the one
         // useful action is the Accept button above. Offering the form anyway is a trap.
         <p className="px-4 text-center text-sm text-muted">
-          No need for a code — {incoming[0]?.otherUser.actualName} already found you. Just accept
+          No need for a code — {incoming[0]?.otherUser.nickname} already found you. Just accept
           above.
         </p>
       ) : outgoing.length > 0 ? (
@@ -189,14 +207,14 @@ export function PairingPanel({
           <p className="text-ink">
             Waiting for{' '}
             <PersonName
-              name={outgoing[0]?.otherUser.actualName ?? ''}
+              name={outgoing[0]?.otherUser.nickname ?? ''}
               gender={outgoing[0]?.otherUser.gender}
             />{' '}
             to accept…
           </p>
           <p className="text-sm text-muted">
-            It is on their screen now — only they can accept it. This page updates itself the
-            moment they do.
+            It is on their screen now — only they can accept it. This page updates itself the moment
+            they do.
           </p>
           <Button
             variant="ghost"
@@ -220,6 +238,27 @@ export function PairingPanel({
               required
               className="min-h-11 w-full rounded-soft border border-line bg-cream px-4 text-center font-display text-xl tracking-[0.2em] text-ink uppercase focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
             />
+            {needsCoupleDetails && (
+              <div className="flex flex-col gap-3">
+                <p className="text-sm text-muted">
+                  Neither of you has told us this yet, and it is what “days together” counts from.
+                </p>
+                <TextField
+                  label="The day you met"
+                  name="firstMetDate"
+                  type="date"
+                  max={new Date().toISOString().slice(0, 10)}
+                  required
+                />
+                <SelectField
+                  label="Where you are"
+                  name="locationType"
+                  options={LOCATION_OPTIONS}
+                  defaultValue="different_city"
+                  required
+                />
+              </div>
+            )}
             <Button type="submit" disabled={busy}>
               {busy ? 'Sending…' : 'Send pairing request'}
             </Button>

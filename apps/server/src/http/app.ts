@@ -9,6 +9,7 @@ import type { SessionRegistry } from '../modules/sessions/sessionRegistry';
 import type { UsersRepository } from '../modules/users/usersRepository';
 import type { RealtimeNotifier } from '../ws/notifier';
 import { logger } from '../logger';
+import { rateLimit } from './rateLimit';
 import { requestLogger } from './requestLogger';
 import { createDashboardRouter } from './routes/dashboard';
 import { createInvitationsRouter } from './routes/invitations';
@@ -58,8 +59,16 @@ export function createApp({
     });
   });
 
-  app.use('/api', createUsersRouter(verifier, users));
-  app.use('/api', createPairingRouter(verifier, pairing, realtime));
+  /**
+   * One budget for every route that spends a pairing code: onboarding, the wizard's lookup, and
+   * sending a request. A code is 8 characters from a 32-character alphabet, and this is what makes
+   * grinding it pointless — so the three of them share a limiter rather than each getting ten
+   * tries of their own.
+   */
+  const pairingCodeLimit = rateLimit({ limit: 10, windowMs: 10 * 60 * 1000 });
+
+  app.use('/api', createUsersRouter(verifier, users, realtime, pairingCodeLimit));
+  app.use('/api', createPairingRouter(verifier, pairing, realtime, pairingCodeLimit));
   app.use('/api', createDashboardRouter(verifier, users, pairing, dashboard));
   app.use('/api', createInvitationsRouter(verifier, invitations, sessions, users, realtime));
 

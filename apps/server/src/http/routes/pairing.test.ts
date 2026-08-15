@@ -35,6 +35,8 @@ function request(path: string, init: RequestInit & { token?: string } = {}) {
 const submitCode = (code: string, token = 'valid') =>
   request('/api/pairing/requests', { method: 'POST', token, body: JSON.stringify({ code }) });
 
+const lookup = (code: string, token = 'valid') => request(`/api/pairing/codes/${code}`, { token });
+
 const respond = (accept: boolean, token = 'valid') =>
   request('/api/pairing/requests/request-1/respond', {
     method: 'POST',
@@ -136,6 +138,85 @@ describe('POST /api/pairing/requests', () => {
 
     expect(attempts.filter((status) => status === 429).length).toBeGreaterThan(0);
     expect(attempts.slice(0, 10).every((status) => status !== 429)).toBe(true);
+  });
+
+  it('forwards the couple’s answers only when both fields came', async () => {
+    await submitCode('GOODCODE');
+    expect(pairing.detailsSeen).toBeUndefined();
+
+    await request('/api/pairing/requests', {
+      method: 'POST',
+      token: 'valid',
+      body: JSON.stringify({
+        code: 'GOODCODE',
+        firstMetDate: '2021-03-14',
+        locationType: 'different_city',
+      }),
+    });
+    expect(pairing.detailsSeen).toEqual({
+      firstMetDate: '2021-03-14',
+      locationType: 'different_city',
+    });
+  });
+
+  it('maps needs_couple_details to a 400 the panel can act on', async () => {
+    pairing.failWith(new PairingError('needs_couple_details', 'nope'));
+    const response = await submitCode('GOODCODE');
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { reason: 'needs_couple_details' },
+    });
+  });
+});
+
+describe('GET /api/pairing/codes/:code', () => {
+  it('describes who a code belongs to, without acting on it', async () => {
+    const response = await lookup('GOODCODE');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'ok',
+      needsCoupleDetails: false,
+      owner: { id: OTHER_USER_ID, nickname: 'Other' },
+    });
+    // Looking is not asking: nobody is told, and no request exists.
+    expect(realtime.sent).toHaveLength(0);
+  });
+
+  it('says when the owner never answered the couple’s questions', async () => {
+    pairing.lookup = { ...pairing.lookup, needsCoupleDetails: true };
+
+    await expect(lookup('GOODCODE').then((r) => r.json())).resolves.toMatchObject({
+      needsCoupleDetails: true,
+    });
+  });
+
+  it.each(['not_found', 'self', 'already_paired'] as const)(
+    'reports %s without naming anybody',
+    async (status) => {
+      pairing.lookup = { status, needsCoupleDetails: false, owner: null };
+
+      await expect(lookup('WHATEVER').then((r) => r.json())).resolves.toEqual({
+        status,
+        needsCoupleDetails: false,
+        owner: null,
+      });
+    },
+  );
+
+  it('needs a token like everything else', async () => {
+    expect((await request('/api/pairing/codes/GOODCODE')).status).toBe(401);
+  });
+
+  /**
+   * The point of the shared limiter. A check that were cheaper than the request it precedes would
+   * be a free oracle for grinding codes, so the two spend one budget between them.
+   */
+  it('spends the same budget as sending a request', async () => {
+    for (let i = 0; i < 10; i += 1) await lookup('NOSUCHCD');
+
+    expect((await submitCode('GOODCODE')).status).toBe(429);
   });
 });
 
