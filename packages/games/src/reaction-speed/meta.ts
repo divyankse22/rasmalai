@@ -1,0 +1,21 @@
+import type { GameMeta } from '../contract';
+
+/**
+ * Reaction Speed — the first game, chosen in T-3 because it proves the platform rather than the
+ * artwork: synchronized start, server-owned timing, per-action validation, rounds, authoritative
+ * scoring, results, reactions, rematch and reconnect, all in about forty seconds of play.
+ *
+ * `renderer: 'react'` per P-6. There is nothing to animate that a div cannot do, and pulling Phaser
+ * in for a coloured rectangle you tap would be the most expensive way to draw one.
+ */
+export const meta: GameMeta = {
+  slug: 'reaction-speed',
+  name: 'Reaction Speed',
+  category: 'competitive',
+  scoringKind: 'competitive',
+  renderer: 'react',
+  players: 2,
+  // The whole game is one big target. It works the same held either way up.
+  orientation: 'any',
+  inputs: ['tap', 'keyboard', 'pointer'],
+};

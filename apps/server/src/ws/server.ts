@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   EVENTS,
   MAX_ENVELOPE_BYTES,
+  REACTIONS,
   createEnvelope,
   parseEnvelope,
   serializeEnvelope,
@@ -11,6 +12,7 @@ import {
 } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
 import { logger } from '../logger';
+import { SessionError, type SessionRegistry } from '../modules/sessions/sessionRegistry';
 import { SocketRegistry } from './socketRegistry';
 
 /** Application close codes. 4000-4999 is the range reserved for private use. */
@@ -21,6 +23,38 @@ export const WS_CLOSE = {
 } as const;
 
 const authenticatePayload = z.object({ accessToken: z.string().min(1).max(8192) });
+const sessionFrame = z.object({ sessionId: z.string().min(1).max(64) });
+const reactionFrame = sessionFrame.extend({ reaction: z.enum(REACTIONS) });
+// `action` is deliberately unvalidated here. Its shape belongs to the game module, which validates
+// it before it touches any state; a platform that also had an opinion would need editing per game.
+const actionFrame = sessionFrame.extend({ action: z.unknown() });
+
+/**
+ * Ceilings on the frames a person can send as fast as they can tap
+ * (`docs/07_SECURITY_PRIVACY.md`). Generous enough for genuine spamming of ❤️ at your partner or
+ * a panicked double tap, low enough that neither can be used to flood the other side.
+ */
+const REACTION_LIMIT = 10;
+const ACTION_LIMIT = 30;
+const RATE_WINDOW_MS = 5_000;
+
+/** Anything wilder than this is a stalled heartbeat, not a slow connection. */
+const MAX_HALF_RTT_MS = 1_000;
+
+/** A fixed window, reset lazily on use. */
+interface Meter {
+  windowStart: number;
+  count: number;
+}
+
+function exceeds(meter: Meter, limit: number, now: number): boolean {
+  if (now - meter.windowStart > RATE_WINDOW_MS) {
+    meter.windowStart = now;
+    meter.count = 0;
+  }
+  meter.count += 1;
+  return meter.count > limit;
+}
 
 interface SocketState {
   userId: string | undefined;
@@ -28,6 +62,17 @@ interface SocketState {
   expiresAt: number | undefined;
   isAlive: boolean;
   authTimer: NodeJS.Timeout | undefined;
+  /** When the outstanding ping went out, for the round-trip measurement. */
+  pingSentAt: number | undefined;
+  /**
+   * Smoothed one-way delay to this socket, in ms, or null before the first pong.
+   *
+   * Measured from the server's own heartbeat and never told to the client, because this number
+   * decides who won a round: a client that could report its own latency could report a better one.
+   */
+  halfRttMs: number | null;
+  reactions: Meter;
+  actions: Meter;
 }
 
 export interface WebSocketServerOptions {
@@ -41,6 +86,13 @@ export interface WebSocketServerOptions {
    * constructed before the server the sockets attach to.
    */
   registry?: SocketRegistry;
+  /** Live sessions. Without one, the socket still authenticates but carries no game traffic. */
+  sessions?: SessionRegistry;
+  /**
+   * Resolves the caller's partner, so coming online can be announced to the one person allowed to
+   * know. Presence is couple-scoped like everything else; nobody else is ever told.
+   */
+  partnerOf?: (userId: string) => Promise<string | null>;
 }
 
 export interface RealtimeServer {
@@ -64,6 +116,8 @@ export function attachWebSocketServer(
     authTimeoutMs = 10_000,
     heartbeatIntervalMs = 20_000,
     registry = new SocketRegistry(),
+    sessions,
+    partnerOf,
   }: WebSocketServerOptions,
 ): RealtimeServer {
   const wss = new WebSocketServer({ server, path, maxPayload: MAX_ENVELOPE_BYTES });
@@ -134,12 +188,23 @@ export function attachWebSocketServer(
         clearTimeout(state.authTimer);
         state.authTimer = undefined;
       }
+
+      // Asked before adding: a person holding two tabs is already online, and their second socket
+      // is not an arrival. Presence is per person, not per socket.
+      const wasOnline = registry.isOnline(user.userId);
       state.userId = user.userId;
       state.expiresAt = user.expiresAt;
       registry.add(user.userId, socket);
 
       send(socket, EVENTS.connection.authenticated, { userId: user.userId }, requestId);
       logger.debug({ userId: user.userId }, 'socket authenticated');
+
+      // An immediate round-trip measurement, rather than waiting up to a heartbeat for the first
+      // one. A game can start within seconds of the page loading, and latency compensation with no
+      // sample yet is no compensation at all.
+      probe(socket, state);
+
+      if (!wasOnline) announcePresence(user.userId, true);
       return;
     }
 
@@ -153,9 +218,164 @@ export function attachWebSocketServer(
       return;
     }
 
-    // Everything past the handshake arrives in later slices; until then an unknown frame is an
-    // error rather than a silent no-op, so client bugs surface immediately.
-    send(socket, EVENTS.error, { code: 'invalid_action', message: 'Unknown message type.' }, requestId);
+    const userId = state.userId;
+
+    // Only the game frames need a session registry. An unrecognised type is still an unrecognised
+    // type whether or not one is wired, and must not be reported as a missing session.
+    const isSessionFrame: boolean = (
+      [
+        EVENTS.lobby.join,
+        EVENTS.lobby.playerReady,
+        EVENTS.lobby.playerUnready,
+        EVENTS.lobby.leave,
+        EVENTS.game.actionRequest,
+        EVENTS.reaction.sent,
+      ] as string[]
+    ).includes(type);
+
+    if (isSessionFrame && !sessions) {
+      send(
+        socket,
+        EVENTS.error,
+        { code: 'session_not_found', message: 'No game is running.' },
+        requestId,
+      );
+      return;
+    }
+
+    try {
+      switch (type) {
+        case EVENTS.lobby.join: {
+          const frame = sessionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+          // The registry decides whether this person belongs in that session; knowing the id
+          // grants nothing (docs/07: never trust a socket because it knows a session id).
+          send(
+            socket,
+            EVENTS.lobby.joined,
+            { session: sessions!.viewFor(frame.data.sessionId, userId) },
+            requestId,
+          );
+          return;
+        }
+
+        case EVENTS.lobby.playerReady:
+        case EVENTS.lobby.playerUnready: {
+          const frame = sessionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+          sessions!.setReady(frame.data.sessionId, userId, type === EVENTS.lobby.playerReady);
+          return;
+        }
+
+        case EVENTS.lobby.leave: {
+          const frame = sessionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+          sessions!.leave(frame.data.sessionId, userId);
+          return;
+        }
+
+        case EVENTS.game.actionRequest: {
+          const frame = actionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+
+          const receivedAt = Date.now();
+          if (exceeds(state.actions, ACTION_LIMIT, receivedAt)) {
+            send(
+              socket,
+              EVENTS.error,
+              { code: 'rate_limited', message: 'Slow down a moment.' },
+              requestId,
+            );
+            return;
+          }
+
+          // The two numbers a competitive game is scored on, and both are the server's own.
+          // `receivedAt` is when the frame actually landed here; the compensation is what the
+          // server measured of this socket's own round trip. The client asserts neither.
+          sessions!.submitAction(frame.data.sessionId, userId, frame.data.action, {
+            receivedAt,
+            compensationMs: Math.min(state.halfRttMs ?? 0, MAX_HALF_RTT_MS),
+          });
+          return;
+        }
+
+        case EVENTS.reaction.sent: {
+          const frame = reactionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+
+          if (exceeds(state.reactions, REACTION_LIMIT, Date.now())) {
+            send(
+              socket,
+              EVENTS.error,
+              { code: 'rate_limited', message: 'Easy on the emoji.' },
+              requestId,
+            );
+            return;
+          }
+
+          sessions!.react(frame.data.sessionId, userId, frame.data.reaction);
+          return;
+        }
+
+        default:
+          // An unknown frame is an error rather than a silent no-op, so client bugs surface
+          // immediately rather than looking like the server ignoring them.
+          send(
+            socket,
+            EVENTS.error,
+            { code: 'invalid_action', message: 'Unknown message type.' },
+            requestId,
+          );
+      }
+    } catch (error) {
+      if (error instanceof SessionError) {
+        // A bad frame is an expected event, not grounds for dropping a connection someone is
+        // mid-game on.
+        send(socket, EVENTS.error, { code: error.code, message: error.message }, requestId);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  function invalidPayload(socket: WebSocket, requestId?: string): void {
+    send(
+      socket,
+      EVENTS.error,
+      { code: 'invalid_payload', message: 'That message was not shaped right.' },
+      requestId,
+    );
+  }
+
+  /**
+   * Tells a person's session and their partner that they have come or gone.
+   *
+   * Fired only on the transitions that matter — first socket in, last socket out — so opening a
+   * second tab never reads as a reconnection.
+   */
+  function announcePresence(userId: string, online: boolean): void {
+    sessions?.handlePresence(userId, online);
+
+    void partnerOf?.(userId)
+      .then((partnerId) => {
+        if (!partnerId) return;
+        const type = online ? EVENTS.presence.playerConnected : EVENTS.presence.playerDisconnected;
+        for (const partnerSocket of registry.socketsFor(partnerId)) {
+          if (partnerSocket.readyState === partnerSocket.OPEN) {
+            partnerSocket.send(serializeEnvelope(createEnvelope(type, { userId, online })));
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        logger.warn({ err: error, userId }, 'could not announce presence to partner');
+      });
+  }
+
+  /** Starts a round-trip measurement. The reply lands in the `pong` handler below. */
+  function probe(socket: WebSocket, state: SocketState): void {
+    if (socket.readyState !== socket.OPEN) return;
+    state.pingSentAt = Date.now();
+    socket.ping();
   }
 
   wss.on('connection', (socket: WebSocket) => {
@@ -164,6 +384,10 @@ export function attachWebSocketServer(
       expiresAt: undefined,
       isAlive: true,
       authTimer: undefined,
+      pingSentAt: undefined,
+      halfRttMs: null,
+      reactions: { windowStart: 0, count: 0 },
+      actions: { windowStart: 0, count: 0 },
     };
     states.set(socket, state);
 
@@ -177,6 +401,16 @@ export function attachWebSocketServer(
 
     socket.on('pong', () => {
       state.isAlive = true;
+
+      if (state.pingSentAt === undefined) return;
+      const sample = (Date.now() - state.pingSentAt) / 2;
+      state.pingSentAt = undefined;
+
+      // Smoothed rather than replaced, so one badly timed sample — a garbage collection pause, a
+      // phone waking up — does not decide the next round. Weighted towards history for the same
+      // reason.
+      state.halfRttMs =
+        state.halfRttMs === null ? sample : state.halfRttMs * 0.7 + sample * 0.3;
     });
 
     socket.on('message', (raw) => {
@@ -188,7 +422,13 @@ export function attachWebSocketServer(
 
     socket.on('close', () => {
       if (state.authTimer) clearTimeout(state.authTimer);
-      if (state.userId !== undefined) registry.remove(state.userId, socket);
+      if (state.userId === undefined) return;
+
+      const userId = state.userId;
+      registry.remove(userId, socket);
+      // Removed first, so "are they still here?" is answered against the truth. Only the last
+      // socket closing is a disconnection; the others are just tabs.
+      if (!registry.isOnline(userId)) announcePresence(userId, false);
     });
 
     socket.on('error', (error) => {
@@ -216,7 +456,8 @@ export function attachWebSocketServer(
       }
 
       state.isAlive = false;
-      socket.ping();
+      // Doubles as the latency sample that keeps the compensation estimate fresh.
+      probe(socket, state);
     }
   }, heartbeatIntervalMs);
   heartbeat.unref();

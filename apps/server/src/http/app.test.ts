@@ -5,7 +5,9 @@ import {
   createInMemoryUsersRepository,
   createRecordingNotifier,
   createStubDashboardRepository,
+  createStubInvitationsRepository,
   createStubPairingRepository,
+  createTestSessionRegistry,
   stubVerifier,
 } from './testing';
 
@@ -21,6 +23,8 @@ beforeAll(async () => {
     users: createInMemoryUsersRepository(),
     pairing: createStubPairingRepository(),
     dashboard: createStubDashboardRepository(),
+    invitations: createStubInvitationsRepository(),
+    sessions: createTestSessionRegistry(),
     realtime: createRecordingNotifier(),
   }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));

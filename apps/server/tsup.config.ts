@@ -9,5 +9,7 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   // Workspace packages are source-only, so they must be bundled rather than resolved at runtime.
-  noExternal: ['@rasmalai/shared'],
+  // Only the entrypoints the server actually imports come along: `@rasmalai/games/server` pulls in
+  // the rulebooks, and nothing here reaches a renderer.
+  noExternal: ['@rasmalai/shared', '@rasmalai/games'],
 });

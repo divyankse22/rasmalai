@@ -13,8 +13,8 @@ loadDotenv({ path: resolve(repoRoot, '.env'), quiet: true });
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // @rasmalai/shared ships TypeScript source rather than a build step.
-  transpilePackages: ['@rasmalai/shared'],
+  // Both workspace packages ship TypeScript source rather than a build step.
+  transpilePackages: ['@rasmalai/shared', '@rasmalai/games'],
   // Trace from the monorepo root, so an unrelated lockfile elsewhere on the machine
   // cannot be mistaken for this workspace's root during a build.
   outputFileTracingRoot: repoRoot,

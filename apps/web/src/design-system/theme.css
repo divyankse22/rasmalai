@@ -38,8 +38,29 @@
   --shadow-soft: 0 8px 24px -12px rgb(61 43 58 / 0.25);
   --shadow-lift: 0 16px 40px -16px rgb(61 43 58 / 0.32);
 
-  /* Motion. Small and springy; nothing longer than a blink. */
+  /* Motion. Small and springy; nothing longer than a blink.
+     The namespace is `--transition-duration-*`, not `--duration-*`: `duration-quick` resolves
+     against the former, and under the latter every animation in the app silently fell back to
+     Tailwind's 150ms default while this file looked like it was in charge. */
   --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --duration-quick: 120ms;
-  --duration-soft: 240ms;
+  --transition-duration-quick: 120ms;
+  --transition-duration-soft: 240ms;
+}
+
+/*
+ * An in-game reaction drifting up and fading out.
+ *
+ * Lives here with the rest of the visual identity rather than next to the component, so a reskin
+ * changes how a reaction feels without touching any TypeScript. `globals.css` disables it wholesale
+ * for anyone who has asked for reduced motion.
+ */
+@keyframes float {
+  from {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-9rem) scale(1.4);
+    opacity: 0;
+  }
 }

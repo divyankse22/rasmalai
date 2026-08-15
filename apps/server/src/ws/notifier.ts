@@ -1,4 +1,5 @@
 import { createEnvelope, serializeEnvelope } from '@rasmalai/shared';
+import { logger } from '../logger';
 import type { SocketRegistry } from './socketRegistry';
 
 /**
@@ -24,7 +25,16 @@ export function createNotifier(registry: SocketRegistry): RealtimeNotifier {
     sendToUser(userId, type, payload) {
       const frame = serializeEnvelope(createEnvelope(type, payload));
       for (const socket of registry.socketsFor(userId)) {
-        if (socket.readyState === socket.OPEN) socket.send(frame);
+        if (socket.readyState !== socket.OPEN) continue;
+        try {
+          socket.send(frame);
+        } catch (error) {
+          // One dying socket must not stop the frame reaching the other player, and must never
+          // unwind into whatever asked for the broadcast — mid-game, that caller is holding the
+          // match clock. A dropped frame costs nothing: every event carries the whole state, so the
+          // next one puts them right, and a reconnect asks for it outright.
+          logger.warn({ err: error, userId, type }, 'could not deliver a frame to a socket');
+        }
       }
     },
 

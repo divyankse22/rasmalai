@@ -24,13 +24,26 @@ export const EVENTS = {
     rejected: 'game.invitation.rejected',
     expired: 'game.invitation.expired',
     invalidated: 'game.invitation.invalidated',
+    // Not in docs/04's list: withdrawing is distinct from being superseded, and the sender's own
+    // screen needs to know which happened. The pairing family carries the same addition.
+    cancelled: 'game.invitation.cancelled',
   },
   lobby: {
+    /** Client → server: "put me in this session and tell me where it is up to." */
+    join: 'lobby.join',
     joined: 'lobby.joined',
     playerReady: 'lobby.player.ready',
     playerUnready: 'lobby.player.unready',
     starting: 'lobby.starting',
     started: 'lobby.started',
+    /**
+     * Client → server: "I am done, close this for both of us." Not in docs/04's list, and not the
+     * same thing as a disconnect — walking away on purpose should not leave your partner watching a
+     * 120-second countdown for somebody who is not coming back.
+     */
+    leave: 'lobby.leave',
+    /** The session ended without finishing — a reconnect window ran out, or a player left. */
+    ended: 'lobby.ended',
   },
   presence: {
     playerConnected: 'player.connected',

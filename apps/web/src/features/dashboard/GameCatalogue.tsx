@@ -1,6 +1,7 @@
 import { GAME_CATEGORIES, type CatalogueGame } from '@rasmalai/shared';
 import { Card } from '@/design-system/Card';
 import { CATEGORY_LABEL, gameGlyph } from './gameGlyphs';
+import { InviteButton } from './InviteButton';
 
 /**
  * The catalogue, straight from the database.
@@ -47,6 +48,9 @@ function GameRow({ game }: { game: CatalogueGame }) {
           </p>
         )}
       </div>
+
+      {/* Only a game with a module behind it can be started. The rest are listed, not offered. */}
+      {game.enabled && <InviteButton gameSlug={game.slug} gameName={game.name} />}
     </li>
   );
 }

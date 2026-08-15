@@ -1,14 +1,14 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useState, type FormEvent } from 'react';
 import { EVENTS } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
 import { PersonName, type Gender } from '@/design-system/PersonName';
 import { avatarGlyph } from '@/features/onboarding/avatars';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import { useRealtimeConnection } from '@/realtime/useRealtimeConnection';
+import { useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
@@ -40,26 +40,19 @@ export function PairingPanel({
 
   // A request arriving, or being answered, changes what this page should show. Refreshing the
   // server component is enough - no duplicate client-side copy of the state to keep in sync.
-  const onEvent = useCallback(
-    (envelope: { type: string }) => {
-      if (PAIRING_EVENTS.has(envelope.type)) router.refresh();
-    },
-    [router],
+  useRealtimeEvent(
+    useCallback(
+      (envelope: { type: string }) => {
+        if (PAIRING_EVENTS.has(envelope.type)) router.refresh();
+      },
+      [router],
+    ),
   );
-  const status = useRealtimeConnection({ onEvent });
 
   // Events that fired while this device was asleep or offline are simply gone, so a screen that
   // was disconnected can be showing a request the other device already answered. Resyncing on
   // reconnect closes that window without any polling.
-  const wasOffline = useRef(false);
-  useEffect(() => {
-    if (status === 'connected' && wasOffline.current) {
-      wasOffline.current = false;
-      router.refresh();
-    } else if (status === 'offline') {
-      wasOffline.current = true;
-    }
-  }, [status, router]);
+  useResyncOnReconnect(useCallback(() => router.refresh(), [router]));
 
   async function post(path: string, body: unknown): Promise<boolean> {
     setBusy(true);

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { PairingPanel } from '@/features/pairing/PairingPanel';
 import { getMyProfile, getPairingState } from '@/lib/api';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 
 export default async function PairingPage() {
   const supabase = await createSupabaseServerClient();
@@ -24,11 +25,15 @@ export default async function PairingPage() {
         <p className="text-muted">One code, one accept, and you are paired for good.</p>
       </header>
 
-      <PairingPanel
-        pairingCode={profile.pairingCode}
-        incoming={state?.incoming ?? []}
-        outgoing={state?.outgoing ?? []}
-      />
+      {/* Its own provider: pairing sits outside the signed-in shell, but still needs the socket to
+          hear a request arrive or be answered. */}
+      <RealtimeProvider>
+        <PairingPanel
+          pairingCode={profile.pairingCode}
+          incoming={state?.incoming ?? []}
+          outgoing={state?.outgoing ?? []}
+        />
+      </RealtimeProvider>
     </main>
   );
 }

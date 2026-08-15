@@ -1,6 +1,6 @@
 'use client';
 
-import { useRealtimeConnection } from './useRealtimeConnection';
+import { useRealtime } from './RealtimeProvider';
 
 const LABELS = {
   connecting: { text: 'connecting…', dot: 'bg-butter', tone: 'text-muted' },
@@ -9,7 +9,7 @@ const LABELS = {
 } as const;
 
 export function ConnectionStatusPill() {
-  const status = useRealtimeConnection();
+  const { status } = useRealtime();
   const { text, dot, tone } = LABELS[status];
 
   return (

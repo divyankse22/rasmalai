@@ -3,12 +3,15 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { INTERNAL_ERROR } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
 import type { DashboardRepository } from '../modules/dashboard/dashboardRepository';
+import type { InvitationsRepository } from '../modules/invitations/invitationsRepository';
 import type { PairingRepository } from '../modules/pairing/pairingRepository';
+import type { SessionRegistry } from '../modules/sessions/sessionRegistry';
 import type { UsersRepository } from '../modules/users/usersRepository';
 import type { RealtimeNotifier } from '../ws/notifier';
 import { logger } from '../logger';
 import { requestLogger } from './requestLogger';
 import { createDashboardRouter } from './routes/dashboard';
+import { createInvitationsRouter } from './routes/invitations';
 import { createPairingRouter } from './routes/pairing';
 import { createUsersRouter } from './routes/users';
 
@@ -19,6 +22,8 @@ export interface AppOptions {
   users: UsersRepository;
   pairing: PairingRepository;
   dashboard: DashboardRepository;
+  invitations: InvitationsRepository;
+  sessions: SessionRegistry;
   realtime: RealtimeNotifier;
 }
 
@@ -30,6 +35,8 @@ export function createApp({
   users,
   pairing,
   dashboard,
+  invitations,
+  sessions,
   realtime,
 }: AppOptions) {
   const app = express();
@@ -54,6 +61,7 @@ export function createApp({
   app.use('/api', createUsersRouter(verifier, users));
   app.use('/api', createPairingRouter(verifier, pairing, realtime));
   app.use('/api', createDashboardRouter(verifier, users, pairing, dashboard));
+  app.use('/api', createInvitationsRouter(verifier, invitations, sessions, users, realtime));
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: { code: 'not_found', message: 'Unknown endpoint.' } });

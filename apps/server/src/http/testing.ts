@@ -1,4 +1,4 @@
-import type { RecentStats } from '@rasmalai/shared';
+import type { InvitationView, RecentStats } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
 import type {
   CatalogueRow,
@@ -21,6 +21,13 @@ import {
   type UserProfile,
   type UsersRepository,
 } from '../modules/users/usersRepository';
+import type {
+  CreatedInvitation,
+  InvitationError,
+  InvitationsRepository,
+  RespondedInvitation,
+} from '../modules/invitations/invitationsRepository';
+import { createSessionRegistry, type SessionRegistry } from '../modules/sessions/sessionRegistry';
 import type { RealtimeNotifier } from '../ws/notifier';
 
 /**
@@ -259,4 +266,107 @@ export function testCatalogueRow(overrides: Partial<CatalogueRow> & { slug: stri
     marginSamples: 0,
     ...overrides,
   };
+}
+
+export const TEST_INVITATION_ID = '44444444-4444-4444-4444-444444444444';
+
+/** An invitation as the given person sees it — which decides its direction and who "they" are. */
+export function testInvitationView(viewerId: string, gameSlug = 'reaction-speed'): InvitationView {
+  const outgoing = viewerId === TEST_USER_ID;
+  return {
+    id: TEST_INVITATION_ID,
+    gameSlug,
+    gameName: 'Reaction Speed',
+    status: 'pending',
+    direction: outgoing ? 'outgoing' : 'incoming',
+    otherUser: {
+      id: outgoing ? OTHER_USER_ID : TEST_USER_ID,
+      nickname: outgoing ? 'Other' : 'Div',
+      avatarKey: 'fox',
+      gender: 'female',
+    },
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+  };
+}
+
+/**
+ * Stands in for the invitations repository.
+ *
+ * The genuine transactional behaviour — the unique index, lazy expiry, the counter-proposal
+ * happening in one transaction — is covered against real Postgres. This exists so the routes can be
+ * tested for status codes, authorization and who gets told, without a database.
+ */
+export function createStubInvitationsRepository(): InvitationsRepository & {
+  failWith(error: InvitationError | null): void;
+  active: InvitationView | null;
+  counterOnReject: boolean;
+  created: { userId: string; gameSlug: string }[];
+  responded: { userId: string; invitationId: string; accept: boolean }[];
+} {
+  let failure: InvitationError | null = null;
+
+  const stub = {
+    active: null as InvitationView | null,
+    counterOnReject: false,
+    created: [] as { userId: string; gameSlug: string }[],
+    responded: [] as { userId: string; invitationId: string; accept: boolean }[],
+
+    failWith(error: InvitationError | null) {
+      failure = error;
+    },
+
+    async viewFor(_invitationId: string, userId: string) {
+      return testInvitationView(userId);
+    },
+
+    async activeFor() {
+      return stub.active;
+    },
+
+    async create(userId: string, gameSlug: string): Promise<CreatedInvitation> {
+      if (failure) throw failure;
+      stub.created.push({ userId, gameSlug });
+      return {
+        invitation: testInvitationView(userId, gameSlug),
+        otherUserId: userId === TEST_USER_ID ? OTHER_USER_ID : TEST_USER_ID,
+        invalidatedId: null,
+      };
+    },
+
+    async respond(
+      userId: string,
+      invitationId: string,
+      accept: boolean,
+    ): Promise<RespondedInvitation> {
+      if (failure) throw failure;
+      stub.responded.push({ userId, invitationId, accept });
+      return {
+        invitationId,
+        accepted: accept,
+        coupleId: TEST_COUPLE_ID,
+        gameSlug: 'reaction-speed',
+        gameName: 'Reaction Speed',
+        otherUserId: userId === TEST_USER_ID ? OTHER_USER_ID : TEST_USER_ID,
+        counterInvitation:
+          !accept && stub.counterOnReject ? testInvitationView(userId, 'four-in-a-row') : null,
+      };
+    },
+
+    async cancel(userId: string) {
+      if (failure) throw failure;
+      return { otherUserId: userId === TEST_USER_ID ? OTHER_USER_ID : TEST_USER_ID };
+    },
+
+    async sweepExpired() {
+      return [];
+    },
+  };
+
+  return stub;
+}
+
+/** A real session registry with everybody online, which is what the route tests want. */
+export function createTestSessionRegistry(): SessionRegistry {
+  return createSessionRegistry(createRecordingNotifier(), { isOnline: () => true });
 }
