@@ -370,6 +370,14 @@ export function createPairingRepository(pool: Pool): PairingRepository {
           row.target_user_id,
         ]);
 
+        // The couple's aggregate row, created here so the dashboard never has to cope with its
+        // absence (docs/13_ARCHITECTURE_PROPOSAL.md section 4). Inside the same transaction: a
+        // couple that exists without somewhere to keep its statistics is not a state worth having.
+        await client.query(
+          'insert into public.lifetime_statistics (couple_id) values ($1) on conflict do nothing',
+          [coupleId],
+        );
+
         await client.query(
           `update public.pairing_requests set status = 'accepted', responded_at = now()
             where id = $1`,

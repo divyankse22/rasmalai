@@ -2,11 +2,13 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { INTERNAL_ERROR } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
+import type { DashboardRepository } from '../modules/dashboard/dashboardRepository';
 import type { PairingRepository } from '../modules/pairing/pairingRepository';
 import type { UsersRepository } from '../modules/users/usersRepository';
 import type { RealtimeNotifier } from '../ws/notifier';
 import { logger } from '../logger';
 import { requestLogger } from './requestLogger';
+import { createDashboardRouter } from './routes/dashboard';
 import { createPairingRouter } from './routes/pairing';
 import { createUsersRouter } from './routes/users';
 
@@ -16,12 +18,20 @@ export interface AppOptions {
   verifier: TokenVerifier;
   users: UsersRepository;
   pairing: PairingRepository;
+  dashboard: DashboardRepository;
   realtime: RealtimeNotifier;
 }
 
 const startedAt = Date.now();
 
-export function createApp({ appOrigin, verifier, users, pairing, realtime }: AppOptions) {
+export function createApp({
+  appOrigin,
+  verifier,
+  users,
+  pairing,
+  dashboard,
+  realtime,
+}: AppOptions) {
   const app = express();
 
   app.disable('x-powered-by');
@@ -43,6 +53,7 @@ export function createApp({ appOrigin, verifier, users, pairing, realtime }: App
 
   app.use('/api', createUsersRouter(verifier, users));
   app.use('/api', createPairingRouter(verifier, pairing, realtime));
+  app.use('/api', createDashboardRouter(verifier, users, pairing, dashboard));
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: { code: 'not_found', message: 'Unknown endpoint.' } });

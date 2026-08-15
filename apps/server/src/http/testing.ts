@@ -1,4 +1,11 @@
+import type { RecentStats } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
+import type {
+  CatalogueRow,
+  CoupleScope,
+  DashboardRepository,
+  LifetimeTotals,
+} from '../modules/dashboard/dashboardRepository';
 import {
   PairingError,
   type CancelResult,
@@ -183,4 +190,73 @@ export function createStubPairingRepository(): PairingRepository & {
   };
 
   return stub;
+}
+
+/** The couple used by the dashboard tests. The viewer sits in slot A unless a test says otherwise. */
+export const TEST_COUPLE_ID = '33333333-3333-3333-3333-333333333333';
+
+const emptyLifetime: LifetimeTotals = {
+  totalGames: 0,
+  competitiveGames: 0,
+  draws: 0,
+  totalTimePlayedSeconds: 0,
+  you: { wins: 0, currentStreak: 0, longestStreak: 0, tournamentWins: 0 },
+  partner: { wins: 0, currentStreak: 0, longestStreak: 0, tournamentWins: 0 },
+  closestMatch: null,
+};
+
+/**
+ * Stands in for the dashboard reads.
+ *
+ * The zero values are the point: slice 5's whole exit condition is that a couple who has never
+ * finished a match sees a correct dashboard rather than blanks, NaNs or a crash.
+ */
+export function createStubDashboardRepository(): DashboardRepository & {
+  scope: CoupleScope | null;
+  catalogueRows: CatalogueRow[];
+  lifetimeTotals: LifetimeTotals;
+  recent: RecentStats;
+} {
+  const stub = {
+    scope: { coupleId: TEST_COUPLE_ID, viewerIsUserA: true } as CoupleScope | null,
+    catalogueRows: [] as CatalogueRow[],
+    lifetimeTotals: structuredClone(emptyLifetime),
+    recent: { gamesPlayed: 0, youWon: 0, partnerWon: 0, draws: 0 } as RecentStats,
+
+    async findCoupleScope() {
+      return stub.scope;
+    },
+    async catalogue() {
+      return stub.catalogueRows;
+    },
+    async lifetime() {
+      return stub.lifetimeTotals;
+    },
+    async lastSevenDays() {
+      return stub.recent;
+    },
+  };
+
+  return stub;
+}
+
+/** A catalogue row with everything at zero, so a test only states the fields it cares about. */
+export function testCatalogueRow(overrides: Partial<CatalogueRow> & { slug: string }): CatalogueRow {
+  return {
+    name: overrides.slug,
+    description: 'A game.',
+    category: 'competitive',
+    scoringKind: 'competitive',
+    renderer: 'react',
+    enabled: false,
+    plays: 0,
+    yourWins: 0,
+    partnerWins: 0,
+    draws: 0,
+    yourBestScore: null,
+    partnerBestScore: null,
+    marginTotal: 0,
+    marginSamples: 0,
+    ...overrides,
+  };
 }

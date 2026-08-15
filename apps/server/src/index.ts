@@ -4,6 +4,7 @@ import { loadEnv } from './config/env';
 import { closePool, getPool } from './db/pool';
 import { createApp } from './http/app';
 import { logger } from './logger';
+import { createDashboardRepository } from './modules/dashboard/dashboardRepository';
 import { createPairingRepository } from './modules/pairing/pairingRepository';
 import { createUsersRepository } from './modules/users/usersRepository';
 import { createNotifier } from './ws/notifier';
@@ -23,6 +24,7 @@ const app = createApp({
   verifier,
   users: createUsersRepository(pool),
   pairing: createPairingRepository(pool),
+  dashboard: createDashboardRepository(pool),
   realtime: createNotifier(registry),
 });
 const server = createServer(app);

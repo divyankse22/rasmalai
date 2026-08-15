@@ -1,3 +1,4 @@
+import type { DashboardPayload } from '@rasmalai/shared';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export type Gender = 'male' | 'female';
@@ -73,4 +74,16 @@ export async function getPairingState(): Promise<PairingState | null> {
   const response = await fetchFromApi('/api/pairing');
   if (!response.ok) return null;
   return (await response.json()) as PairingState;
+}
+
+/**
+ * Everything the dashboard draws, in one request.
+ *
+ * The payload type is shared with the backend rather than re-declared here, so a stat that changes
+ * shape breaks the build instead of quietly rendering `undefined`.
+ */
+export async function getDashboard(): Promise<DashboardPayload | null> {
+  const response = await fetchFromApi('/api/dashboard');
+  if (!response.ok) return null;
+  return (await response.json()) as DashboardPayload;
 }

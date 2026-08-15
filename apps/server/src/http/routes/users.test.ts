@@ -5,6 +5,7 @@ import {
   TEST_USER_ID,
   createInMemoryUsersRepository,
   createRecordingNotifier,
+  createStubDashboardRepository,
   createStubPairingRepository,
   stubVerifier,
 } from '../testing';
@@ -47,6 +48,7 @@ beforeEach(async () => {
     verifier: stubVerifier,
     users,
     pairing: createStubPairingRepository(),
+    dashboard: createStubDashboardRepository(),
     realtime: createRecordingNotifier(),
   }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));

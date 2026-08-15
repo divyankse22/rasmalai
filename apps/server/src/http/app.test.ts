@@ -4,6 +4,7 @@ import { createApp } from './app';
 import {
   createInMemoryUsersRepository,
   createRecordingNotifier,
+  createStubDashboardRepository,
   createStubPairingRepository,
   stubVerifier,
 } from './testing';
@@ -19,6 +20,7 @@ beforeAll(async () => {
     verifier: stubVerifier,
     users: createInMemoryUsersRepository(),
     pairing: createStubPairingRepository(),
+    dashboard: createStubDashboardRepository(),
     realtime: createRecordingNotifier(),
   }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));

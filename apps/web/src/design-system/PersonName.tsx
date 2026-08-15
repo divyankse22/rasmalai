@@ -6,6 +6,17 @@ const TONE: Record<Gender, string> = {
 };
 
 /**
+ * The text colour belonging to one person.
+ *
+ * Exported so a number that belongs to somebody — their wins, their streak — can be tinted the
+ * same way their name is, without a second copy of the mapping. Falls back to ordinary ink rather
+ * than guessing.
+ */
+export function nameTone(gender: Gender | undefined): string {
+  return gender ? TONE[gender] : 'text-ink';
+}
+
+/**
  * Renders somebody's name in their colour.
  *
  * Every place a person is named goes through here, so the mapping lives in exactly one file and
