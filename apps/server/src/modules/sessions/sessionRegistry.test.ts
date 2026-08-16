@@ -17,6 +17,7 @@ import {
   RECONNECT_WINDOW_MS,
   type SessionView,
 } from '@rasmalai/shared';
+import type { MatchEndedInput, MatchStartedInput } from '../statistics/matchRecorder';
 import { SessionError, createSessionRegistry, type SessionRegistry } from './sessionRegistry';
 
 const ALICE = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -32,6 +33,15 @@ interface Sent {
 let sent: Sent[];
 let online: Set<string>;
 let sessions: SessionRegistry;
+/** Everything the registry told the recorder, in order. Slice 8's half of a match. */
+let recorded: (
+  | ({ op: 'started' } & MatchStartedInput)
+  | ({ op: 'ended' } & MatchEndedInput)
+)[];
+
+const recordedOps = () => recorded.map((entry) => entry.op);
+const endings = () =>
+  recorded.filter((entry): entry is { op: 'ended' } & MatchEndedInput => entry.op === 'ended');
 
 /** Every event a given person received, in order. */
 const typesFor = (userId: string) =>
@@ -93,6 +103,7 @@ const cooperativeRules = {
 beforeEach(() => {
   vi.useFakeTimers();
   sent = [];
+  recorded = [];
   online = new Set([ALICE, BOB]);
   sessions = createSessionRegistry(
     {
@@ -103,7 +114,16 @@ beforeEach(() => {
     { isOnline: (userId) => online.has(userId) },
     // The real Reaction Speed rules, with the one unpredictable thing about them pinned down. These
     // tests are about the platform's half of the arrangement, played against a genuine game.
-    { random: () => 0.5 },
+    {
+      random: () => 0.5,
+      // Recording is fire and forget, so the fake keeps the announcements and returns nothing —
+      // exactly as much as the registry is allowed to depend on.
+      recorder: {
+        matchStarted: (input) => recorded.push({ op: 'started', ...input }),
+        matchEnded: (input) => recorded.push({ op: 'ended', ...input }),
+        drain: () => Promise.resolve(),
+      },
+    },
   );
 });
 
@@ -1423,5 +1443,179 @@ describe('a second game, on the same platform', () => {
     expect(rematch.result).toBeNull();
     expect(boardView(id, ALICE).discsPlaced).toBe(0);
     expect(boardView(id, ALICE).complete).toBe(false);
+  });
+});
+
+/**
+ * Slice 8: the platform's half of a match record.
+ *
+ * The registry decides *what happened*; the statistics module decides what it is worth. So what is
+ * tested here is only the announcement — that a match is opened when one begins, that its ending
+ * carries people rather than seats, that it is announced exactly once, and that every way a match
+ * can stop reaches the recorder as the right kind of ending.
+ */
+describe('writing a match down', () => {
+  /** Alice takes three rounds, Bob two — the same match the results screen was proved against. */
+  function playFullMatch(id: string): void {
+    for (const [alice, bob] of [
+      [200, 300],
+      [200, 300],
+      [200, 300],
+      [400, 300],
+      [400, 300],
+    ] as const) {
+      playRound(id, alice, bob);
+    }
+  }
+
+  it('says nothing at all about a session nobody has played', () => {
+    const id = startSession();
+    sessions.setReady(id, ALICE, true);
+    sessions.leave(id, ALICE);
+
+    // A lobby two people walked out of is not a match, and a `matches` row for it would be a game
+    // in the seven-day history that never happened.
+    expect(recorded).toEqual([]);
+  });
+
+  it('opens a match when the countdown runs out', () => {
+    const id = startPlaying();
+
+    expect(recordedOps()).toEqual(['started']);
+    expect(recorded[0]).toMatchObject({
+      coupleId: COUPLE,
+      gameSlug: 'reaction-speed',
+      // Slice 9 is what makes this anything else.
+      mode: 'individual',
+    });
+    expect(sessions.viewFor(id, ALICE).phase).toBe('active');
+  });
+
+  it('records the result with seats resolved back into people', () => {
+    const id = startPlaying();
+    playFullMatch(id);
+
+    expect(recordedOps()).toEqual(['started', 'ended']);
+    const ending = endings()[0]!;
+    // The same handle both ways round, which is what pairs a completion with its own insert.
+    expect(ending.matchKey).toBe(recorded[0]!.matchKey);
+    expect(ending.outcome).toEqual({
+      status: 'completed',
+      players: [
+        { userId: ALICE, score: 3 },
+        { userId: BOB, score: 2 },
+      ],
+      winnerUserId: ALICE,
+      byForfeit: false,
+    });
+  });
+
+  it('records a rematch as a match of its own', () => {
+    const id = startPlaying();
+    playFullMatch(id);
+    sessions.setReady(id, ALICE, true);
+    sessions.setReady(id, BOB, true);
+    vi.advanceTimersByTime(COUNTDOWN_MS);
+
+    expect(recordedOps()).toEqual(['started', 'ended', 'started']);
+    expect(recorded[2]!.matchKey).not.toBe(recorded[0]!.matchKey);
+  });
+
+  it('records one ending per match, however the session is finally closed', () => {
+    const id = startPlaying();
+    playFullMatch(id);
+    // They read the result and then leave, which tears the session down long after the match ended.
+    sessions.leave(id, BOB);
+
+    expect(endings()).toHaveLength(1);
+    expect(endings()[0]!.outcome.status).toBe('completed');
+  });
+
+  it('flags a match won on the clock rather than on the board', () => {
+    const id = startBoard();
+    const stalling = toMove(id);
+    const waiting = stalling === ALICE ? BOB : ALICE;
+
+    vi.advanceTimersByTime(MOVE_WINDOW_MS);
+
+    expect(endings()[0]!.outcome).toEqual({
+      status: 'completed',
+      players: [
+        { userId: ALICE, score: ALICE === waiting ? 1 : 0 },
+        { userId: BOB, score: BOB === waiting ? 1 : 0 },
+      ],
+      winnerUserId: waiting,
+      // What stops a walkover from becoming this couple's closest ever match.
+      byForfeit: true,
+    });
+  });
+
+  it('records an abandoned match when the two of them agree to stop (P-8)', () => {
+    const id = startPlaying();
+    sessions.requestLeave(id, ALICE);
+    sessions.respondToLeave(id, BOB, true);
+
+    expect(endings()[0]!.outcome).toEqual({ status: 'abandoned' });
+  });
+
+  it('records an abandoned match when both of them walk out', () => {
+    const id = startPlaying();
+    sessions.markAway(id, ALICE);
+    sessions.markAway(id, BOB);
+    vi.advanceTimersByTime(RECONNECT_WINDOW_MS + 1);
+
+    expect(endings()[0]!.outcome).toEqual({ status: 'abandoned' });
+  });
+
+  it('records an abandoned match when the backend stops mid-game', () => {
+    startPlaying();
+    sessions.closeAll();
+
+    // Live sessions do not survive a restart, so the row must not be left claiming to be active —
+    // the partial unique index would then refuse this couple every future match.
+    expect(endings()[0]!.outcome).toEqual({ status: 'abandoned' });
+  });
+
+  it('records a cooperative game that ran out of clock as abandoned, never as a win', () => {
+    const registry = createSessionRegistry(
+      {
+        sendToUser(userId, type, payload) {
+          sent.push({ userId, type, payload });
+        },
+      },
+      { isOnline: (userId) => online.has(userId) },
+      {
+        random: () => 0.5,
+        findRules: () => cooperativeRules,
+        recorder: {
+          matchStarted: (input) => recorded.push({ op: 'started', ...input }),
+          matchEnded: (input) => recorded.push({ op: 'ended', ...input }),
+          drain: () => Promise.resolve(),
+        },
+      },
+    );
+
+    const coop = registry.create({
+      coupleId: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      gameSlug: 'boat-escape',
+      gameName: 'Boat Escape',
+      players: [
+        { userId: ALICE, nickname: 'Ali', avatarKey: 'fox', gender: 'female' },
+        { userId: BOB, nickname: 'Bo', avatarKey: 'penguin', gender: 'male' },
+      ],
+    }).id;
+
+    registry.join(coop, ALICE);
+    registry.join(coop, BOB);
+    registry.setReady(coop, ALICE, true);
+    registry.setReady(coop, BOB, true);
+    vi.advanceTimersByTime(COUNTDOWN_MS);
+
+    registry.markAway(coop, ALICE);
+    vi.advanceTimersByTime(RECONNECT_WINDOW_MS + 1);
+
+    // P-3: there is no winner to award, so the match simply stops. Counting it as a win for the
+    // partner who stayed would invent a competition the game does not have.
+    expect(endings()[0]!.outcome).toEqual({ status: 'abandoned' });
   });
 });

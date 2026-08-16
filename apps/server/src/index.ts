@@ -8,7 +8,10 @@ import { createDashboardRepository } from './modules/dashboard/dashboardReposito
 import { startInvitationSweeper } from './modules/invitations/expirySweeper';
 import { createInvitationsRepository } from './modules/invitations/invitationsRepository';
 import { createPairingRepository } from './modules/pairing/pairingRepository';
+import { startRetentionJob } from './modules/retention/retentionJob';
 import { createSessionRegistry } from './modules/sessions/sessionRegistry';
+import { createMatchRecorder } from './modules/statistics/matchRecorder';
+import { createStatisticsRepository } from './modules/statistics/statisticsRepository';
 import { createUsersRepository } from './modules/users/usersRepository';
 import { createNotifier } from './ws/notifier';
 import { attachWebSocketServer } from './ws/server';
@@ -23,9 +26,12 @@ const pool = getPool(env.DATABASE_URL);
 const registry = new SocketRegistry();
 const notifier = createNotifier(registry);
 
+const statistics = createStatisticsRepository(pool);
+const recorder = createMatchRecorder(statistics);
+
 // Live sessions read presence straight from the socket registry rather than keeping their own
 // copy, so the two can never disagree about who is here.
-const sessions = createSessionRegistry(notifier, registry);
+const sessions = createSessionRegistry(notifier, registry, { recorder });
 const invitations = createInvitationsRepository(pool);
 const pairing = createPairingRepository(pool);
 
@@ -51,6 +57,21 @@ const realtime = attachWebSocketServer(server, {
   partnerOf: async (userId) => (await pairing.findPartner(userId))?.id ?? null,
 });
 const sweeper = startInvitationSweeper(invitations, notifier);
+const retention = startRetentionJob(statistics);
+
+/**
+ * Live sessions are memory-only, so any match still marked `active` belongs to a process that is
+ * already gone. Left alone, the partial unique index enforcing ADR-009 would refuse that couple
+ * every future match for the life of this one.
+ */
+void statistics
+  .abandonOrphanedMatches()
+  .then((count) => {
+    if (count > 0) logger.warn({ count }, 'closed matches orphaned by a restart');
+  })
+  .catch((error: unknown) => {
+    logger.error({ err: error }, 'failed to close orphaned matches');
+  });
 
 server.listen(env.PORT, () => {
   logger.info({ port: env.PORT, env: env.NODE_ENV }, 'rasmalai server listening');
@@ -78,10 +99,15 @@ function shutdown(signal: NodeJS.Signals) {
   // Sessions are memory-only and do not survive this, so both players are told the game is over
   // rather than being left watching a lobby that will never move again.
   sweeper.stop();
+  retention.stop();
   sessions.closeAll();
 
   void realtime
     .close()
+    // Closing the sessions above ended every live match, and those writes are queued rather than
+    // awaited. Draining before the pool closes is the difference between "abandoned" and a row
+    // stuck at `active` until the next restart.
+    .then(() => recorder.drain())
     .then(() => closePool())
     .then(() => {
       server.close((error) => {

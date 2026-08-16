@@ -6,7 +6,7 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: after the session-clock and partner-presence fixes that follow slice 7b.
+Last updated: after slice 8 — match records, aggregates and retention.
 
 ---
 
@@ -23,13 +23,74 @@ Last updated: after the session-clock and partner-presence fixes that follow sli
 | 7 | Reaction Speed (first game, end to end) | **done, verified** |
 | 7b | Four in a Row | **done, verified** |
 | 7c | Session clock rework, partner presence, offline gate | **done**, automated gate green; two-account browser run outstanding |
-| 8 | Results, statistics, retention job | next |
-| 9 | Tournaments | not started |
+| 8 | Match records, lifetime aggregates, streaks, retention job | **done**, automated gate green; two-account browser run outstanding |
+| 9 | Tournaments | next |
 | 10+ | Remaining games, mobile polish, deployment | not started |
 
-Gate at the time of writing: **360 tests passing**, typecheck, lint and both builds green
-(`npm run verify`), plus **41 realtime checks** for Four in a Row against real sockets, real
-Postgres and two real Supabase accounts, and the board itself measured in a browser.
+Gate at the time of writing: **407 tests passing**, typecheck, lint and both builds green
+(`npm run verify`), plus **78 statistics checks** against real Postgres — real matches played
+through the real session registry by two throwaway Supabase accounts, created, paired and deleted
+by the run itself.
+
+---
+
+## Slice 8: the numbers become real
+
+Every dashboard figure was honestly zero until now, because nothing wrote a match down. It does
+now, and the whole slice is **one new module, no migration, and no new column** — `0004` created
+these tables in slice 5 and fixed the formulas in its own comments precisely so this slice would
+have nothing left to invent.
+
+**A row is written when a match starts, not when it ends.** Three things want it that way: `status`
+has to distinguish the three endings the product cares about (P-8 wants an abandoned match visible
+in the seven-day history), the partial unique index on `(couple_id) where status = 'active'` is what
+makes ADR-009 true in the database rather than only in memory, and a match nobody was around to
+finish still happened.
+
+The cost is an `active` row that outlives the process that owned it, and it is a real one: left
+alone, that index would refuse the couple **every future match** until somebody noticed. Live
+sessions are memory-only and never survive a restart, so every `active` row at boot is orphaned by
+definition, and `abandonOrphanedMatches` closes them on the way up.
+
+**The registry stays synchronous.** It announces a match starting and a match ending to a
+`MatchRecorder` and waits for nothing: recording is fire and forget, so the slowest thing in the
+system is never on the path of the fastest, and a database blip is a log line rather than something
+two people mid-game find out about. Seats become people at that boundary and nowhere else — the game
+never learns who played it, and the statistics never learn there were seats.
+
+**Every write goes through one queue.** Two orderings have to hold: a completion after its own
+insert, and one match's completion before the next match's insert — or the ADR-009 index refuses
+the rematch and it goes unrecorded. A per-match queue gets the first and loses the second. At a
+match every few minutes, one FIFO chain costs nothing measurable and cannot get either wrong.
+
+**The arithmetic is TypeScript, not SQL.** `matchStatistics.ts` takes the current row and the match
+and returns the next row; the repository reads `for update`, calls it, and writes back inside the
+transaction that completes the match. A `case when` inside an `on conflict do update` would have
+been fewer lines and untestable, and `docs/09` asks for streak calculation by name — a streak is not
+a property of one match, it is what the last few did to each other, so the tests replay whole
+histories.
+
+Two product decisions were taken here rather than assumed:
+
+- **A forfeit counts as a win and nothing more.** The 1–0 a walkover is awarded is a flag, not a
+  scoreline (`docs/13` section 6), so it feeds games played, wins, win percentage, streaks and that
+  game's play count — and never the margin statistics or a best score. Otherwise "your closest ever
+  match" could turn out to be the evening one of them shut their laptop, and "most competitive game"
+  would start measuring walkouts.
+- **Time played is wall clock, start to end**, including any stretch spent waiting for somebody to
+  come back. A forfeited match therefore carries the 120 seconds nobody was playing. Rare, harmless,
+  and the alternative is threading pause bookkeeping through the registry for a number nobody will
+  audit.
+
+**P-3 is enforced from the catalogue, not from the game module.** `games.scoring_kind` decides
+whether a match was competitive, because that is the same column the dashboard filters on when it
+reads the numbers back. Recording against the module's own metadata instead could write margins no
+screen would ever show.
+
+**Retention** is a daily in-process job (T-7) that also sweeps once at startup, so a backend that was
+down for a week catches up the moment it returns rather than at the next midnight it happens to be
+awake for. Deleting is lossless because P-5 already snapshotted everything into the aggregates —
+proved by expiring a match and reading every lifetime number back afterwards, unchanged.
 
 ---
 
@@ -241,6 +302,21 @@ Slice 7b adds the second game, and the whole point of it is what it did **not** 
 - A draw scores **0–0 rather than 1–1**. The margin between the scores is what feeds "most
   competitive game", and a draw is as close as a match can get.
 
+Slice 8 adds the half that outlives the evening:
+
+- **`modules/statistics/matchStatistics.ts`** — the formulas, as pure functions. Total games, the
+  competitive-only counters, streaks and their high-water marks, the closest match ever played, the
+  per-game margin sum and sample count, and the per-game best scores.
+- **`modules/statistics/statisticsRepository.ts`** — the SQL. Opening a match, completing it and
+  moving every aggregate it touches in one transaction, abandoning it, closing rows orphaned by a
+  restart, and deleting expired ones.
+- **`modules/statistics/matchRecorder.ts`** — the port the session registry sees. Two announcements,
+  one FIFO queue, and a `drain()` the shutdown path awaits before closing the pool, so a match
+  ending in the last second is not lost.
+- **`modules/retention/retentionJob.ts`** — ADR-008's daily sweep, plus one pass at startup.
+- The session registry gained a `matchKey` and four calls. Everything else about it is unchanged:
+  the clocks, the presence rules and the leave protocol were not touched.
+
 ### Database
 
 `public.users` (including a required `gender`), `public.couples` and `public.pairing_requests`. Everything is keyed to
@@ -276,6 +352,13 @@ Slice 6 adds `public.invitations`, with the partial unique index
 inserting the new one share a transaction, so two devices sending different invitations at the same
 moment cannot both end up pending. `replaces_invitation_id` links a counter-proposal back to the
 invitation it answers, so the exchange reads as a conversation rather than two unrelated rows.
+
+**Slice 8 added no migration at all** — no table, no column, no index. `0004` built `matches`,
+`lifetime_statistics` and `couple_game_stats` in slice 5 and wrote the formulas into its own
+comments; the write path was the only thing missing, and it turned out to need nothing new to write
+into. The one thing worth knowing is that `matches_finished_has_ended_at` means every row that stops
+being `active` must be given an `ended_at` in the same statement, including the ones the orphan
+sweep closes.
 
 `0007_four_in_a_row.sql` is a single `update` flipping `games.enabled` for `four-in-a-row`. That is
 the entire database footprint of a second game: the catalogue row has existed since `0004`, and
@@ -371,6 +454,37 @@ looked like it was in charge. Renamed; `duration-quick` and `duration-soft` now 
 
 Not "it compiles" — these were actually run.
 
+- **78 statistics checks against real Postgres**, with two throwaway Supabase accounts created,
+  paired and deleted by the run itself, playing real Four in a Row matches through the real session
+  registry, the real recorder and the real repository:
+  - the row appears the moment the match starts, `active`, for the right game, in individual mode,
+    expiring exactly seven days after it started (ADR-008) — and **a second active match for the
+    same couple is refused by the database** (ADR-009);
+  - nothing is counted while it is still being played;
+  - finishing **completes that same row rather than writing a second one**, with the winner named
+    and the scoreline landing in the correct a/b slots;
+  - the winner's streak, longest streak, the couple's totals, the per-game plays, the margin sample
+    and both best scores all move exactly once;
+  - a **rematch is a match of its own**, inserted only after the first one stopped being active,
+    and the streak extends or resets according to who won it;
+  - a match the two of them agreed to stop is written as `abandoned` with an `ended_at` and no
+    winner, and **counts towards no total, no win, no time played and no play** (P-8);
+  - a **forfeit** is counted as a win and a play and feeds **no margin sample and no best score**,
+    leaving the closest match a real one;
+  - a **draw** counts as a competitive game, ends both streaks, keeps both high-water marks, and is
+    the closest a match can get;
+  - a **cooperative match** is played and timed and counted by nothing else — no competitive game,
+    no draw, no margin, no best score (P-3, read from `games.scoring_kind`);
+  - an abandonment arriving after a match has already completed **cannot un-complete it**;
+  - the dashboard reads every figure back and **mirrors correctly between the two partners**, names
+    the closest match, and shows the plays on the catalogue card;
+  - **retention deletes an eight-day-old match and nothing else**, and every lifetime and per-game
+    number survives it untouched (P-5);
+  - a match orphaned by a restart is closed on the way up, nothing is left claiming to be active,
+    every closed row has its `ended_at`, and **the couple can start playing again immediately**;
+  - deleting the accounts cascades the matches away.
+- The server boots with the retention job and the orphan sweep wired in, answers `/healthz`, and
+  exits cleanly on SIGTERM with the recorder drained before the pool closes.
 - **Two real sockets against a real session registry** (`ws/server.test.ts`): the first player
   joins, goes away and rejoins before the second arrives — no error, no ending, and the partner
   still finds a game when they get there. This is the reported bug, end to end, across both layers
@@ -540,9 +654,12 @@ Not "it compiles" — these were actually run.
    Committing them keeps the working tree clean. `apps/web/next-env.d.ts` is generated too, and its
    contents flip between `.next/types` and `.next/dev/types` depending on whether `build` or `dev`
    ran last — a diff on that file alone is noise.
-6. **Nothing writes the statistics tables yet.** Slice 5 built and proved the read path; the
-   formulas are fixed in the comments of `0004_dashboard.sql` so slice 8 has nothing left to
-   invent. Every dashboard number is therefore honestly zero until then.
+6. **Resolved in slice 8: the statistics tables are written.** Every dashboard number now comes from
+   a real match. What replaces this limitation is narrower: **a failed write is a lost number, not a
+   lost match.** Recording is fire and forget, so a database blip while a match is ending leaves the
+   couple's totals one behind with only a log line to say so. Deliberate — the alternative is making
+   two people mid-game wait on Postgres — and the row is still there to notice, because the match
+   itself was inserted when it started.
 7. **Two of the seventeen games exist.** Reaction Speed and Four in a Row, which between them cover
    both shapes the contract was designed for — timed and turn-based, secret and open, clock-driven
    and player-driven. The remaining fifteen are slice 10+. Nothing about the two that exist suggests
@@ -558,11 +675,9 @@ Not "it compiles" — these were actually run.
 10. **Score units are not modelled.** A per-game best score renders as a bare number, which is right
    for points and wrong for a duration. The game module that first needs it should declare its own
    formatter rather than the platform guessing.
-11. **A finished match is still not written down.** Playing produces an authoritative result on
-   screen and nothing in Postgres, so the dashboard stays honestly zero. Slice 8 writes the
-   `matches` row and the aggregates together, because they share the formulas already fixed in
-   `0004_dashboard.sql`. The end-to-end run asserts the row count is zero, so the day slice 8 lands,
-   that check fails loudly rather than the boundary drifting.
+11. **Resolved in slice 8: a finished match is written down**, together with every aggregate it
+   feeds. The earlier end-to-end runs asserted the row count was zero, so this landing broke those
+   two assertions loudly rather than letting the boundary drift, which is what they were for.
 12. **Latency compensation needs a round trip before it means anything.** A socket that has not
    answered a ping yet is compensated by zero, which is fair but not generous. In practice the
    socket authenticates on page load and is probed immediately, so a game starting seconds later has
@@ -607,6 +722,24 @@ Not "it compiles" — these were actually run.
    covered exactly and deterministically in `four-in-a-row/server.test.ts`, including a real
    forty-two-disc draw found by playing the rules; reaching either through two live sockets means
    scripting forty-odd moves for a path the rules already decide on their own.
+21. **A raw match can outlive its seven days by up to a day.** Retention runs daily, so a row whose
+   `expires_at` has just passed sits there until the next sweep. Nothing shows it: the seven-day
+   dashboard window filters on `started_at` rather than on the row still existing, so the number is
+   right even while the row is not gone yet. Sweeping hourly would narrow it; nothing yet justifies
+   the extra passes.
+22. **Time played counts the waiting.** A forfeited match includes the 120 seconds nobody was
+   playing, and a match paused by a disconnect includes the pause. Wall clock, deliberately (slice
+   8): the alternative threads pause bookkeeping through the registry for a figure nobody will audit.
+23. **A cooperative game's best score has nowhere to go.** P-3 says a non-competitive match touches
+   games-played and time-played and nothing else, and the best-score columns are part of "nothing
+   else". The first cooperative game with a score worth keeping should say so explicitly rather than
+   inherit it by accident — it is a per-game decision, and `couple_game_stats` already has the
+   columns.
+24. **Slice 8 has not been through a two-account browser run** either. The numbers were proved
+   against real Postgres by playing real matches through the real registry, and the dashboard read
+   path was proved to mirror them between both partners — but nobody has watched a dashboard change
+   after finishing a game in a browser. It shares this with slice 7c, and the two are the same
+   sitting: two Google accounts, two browser profiles, one evening.
 
 ---
 

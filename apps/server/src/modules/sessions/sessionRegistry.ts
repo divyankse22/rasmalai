@@ -22,6 +22,11 @@ import {
   type SessionView,
 } from '@rasmalai/shared';
 import { logger } from '../../logger';
+import {
+  NULL_MATCH_RECORDER,
+  type MatchEndedInput,
+  type MatchRecorder,
+} from '../statistics/matchRecorder';
 import type { Gender } from '../users/user.schema';
 import { startMatch, type RunningMatch } from './matchRunner';
 import { SessionError } from './sessionError';
@@ -77,6 +82,13 @@ export { SessionError } from './sessionError';
  *
  * - one at fault → the other player takes it (competitive) or the game simply stops (P-3);
  * - both at fault → nobody won anything, and the session closes counting towards nothing (P-8);
+ *
+ * ## Writing it down
+ *
+ * A match is announced to the `MatchRecorder` when it starts and again when it ends, and that is the
+ * registry's entire relationship with the database. It stays synchronous: recording is fire and
+ * forget, so a slow write can never hold up a move. Seats are turned back into people on the way
+ * out — the game never learns who played it, and the statistics never learn there were seats.
  *
  * Both at fault is the case that used to close a session the instant the second person stepped
  * away. It no longer does: the window runs for both of them, and whoever gets back inside it is the
@@ -141,6 +153,14 @@ interface Session {
   turnDeadline: number | null;
   /** The match being played, or the one just finished while the results are on screen. */
   game: RunningMatch | null;
+  /**
+   * The recorder's handle on the match currently being played, or null when none is.
+   *
+   * Set the moment a match starts and cleared the moment its ending is recorded, so it doubles as
+   * the answer to "is there a result still owed to the database?". Every teardown path runs through
+   * `endSession`, which uses exactly that to decide whether a match was abandoned mid-play.
+   */
+  matchKey: string | null;
   /** Whether the match's own clock is currently stopped, so it is neither paused nor resumed twice. */
   gamePaused: boolean;
   result: GameResult | null;
@@ -177,6 +197,11 @@ export interface SessionRegistryOptions {
   findRules?: (slug: string) => AnyGameRules | null;
   random?: GameContext['random'];
   now?: () => number;
+  /**
+   * Where finished matches go. Defaults to nowhere, which is what every test that is not about
+   * statistics wants — and is why the registry stayed free of a database until slice 8.
+   */
+  recorder?: MatchRecorder;
 }
 
 export interface SessionRegistry {
@@ -225,7 +250,12 @@ const otherSeat = (seat: PlayerIndex): PlayerIndex => (seat === 0 ? 1 : 0);
 export function createSessionRegistry(
   emitter: SessionEmitter,
   presence: PresenceSource,
-  { findRules = findGameRules, random, now = Date.now }: SessionRegistryOptions = {},
+  {
+    findRules = findGameRules,
+    random,
+    now = Date.now,
+    recorder = NULL_MATCH_RECORDER,
+  }: SessionRegistryOptions = {},
 ): SessionRegistry {
   const byId = new Map<string, Session>();
   const byCouple = new Map<string, string>();
@@ -473,12 +503,32 @@ export function createSessionRegistry(
     if (byCouple.get(session.coupleId) === session.id) byCouple.delete(session.coupleId);
   }
 
+  /**
+   * Hands the match's ending to the recorder, exactly once.
+   *
+   * Clearing `matchKey` first is what makes it exactly once: a completed match is recorded by
+   * `finishMatch`, and the `endSession` that follows when they finally leave the results screen
+   * finds nothing left to say.
+   */
+  function recordEnd(session: Session, outcome: MatchEndedInput['outcome']): void {
+    const matchKey = session.matchKey;
+    if (matchKey === null) return;
+    session.matchKey = null;
+
+    recorder.matchEnded({ matchKey, endedAt: new Date(now()), outcome });
+  }
+
   function endSession(
     session: Session,
     phase: 'finished' | 'abandoned',
     reason: SessionEndReason,
     byUserId?: string,
   ): void {
+    // A match still open at this point is one nobody finished: an agreed stop, both of them gone,
+    // a tournament game being restarted, or the process shutting down. P-8 — the row is written and
+    // counted by nothing.
+    recordEnd(session, { status: 'abandoned' });
+
     session.phase = phase;
     session.startsAt = null;
     session.turnSeat = null;
@@ -495,6 +545,18 @@ export function createSessionRegistry(
 
   /** The match is over. The session is not: this is the results screen, and a rematch starts here. */
   function finishMatch(session: Session, result: GameResult, byForfeit = false): void {
+    // Seats become people here and nowhere else. A game never learns who it was played by, and the
+    // statistics never learn there were seats.
+    recordEnd(session, {
+      status: 'completed',
+      players: [
+        { userId: session.players[0].userId, score: result.scores[0] },
+        { userId: session.players[1].userId, score: result.scores[1] },
+      ],
+      winnerUserId: result.winner === null ? null : session.players[result.winner].userId,
+      byForfeit,
+    });
+
     session.phase = 'finished';
     session.result = result;
     session.resultByForfeit = byForfeit;
@@ -563,6 +625,17 @@ export function createSessionRegistry(
     session.resultByForfeit = false;
     session.competitive = rules.meta.scoringKind === 'competitive';
     session.pauseOnDisconnect = rules.reconnectPolicy.pauseOnDisconnect;
+
+    // Announced before the match exists rather than after, because a game is allowed to finish
+    // inside `startMatch` and the completion must never overtake the start it belongs to.
+    session.matchKey = randomUUID();
+    recorder.matchStarted({
+      matchKey: session.matchKey,
+      coupleId: session.coupleId,
+      gameSlug: session.gameSlug,
+      mode: session.mode,
+      startedAt: new Date(now()),
+    });
 
     session.game = startMatch({
       rules,
@@ -754,6 +827,7 @@ export function createSessionRegistry(
         turnSeat: null,
         turnDeadline: null,
         game: null,
+        matchKey: null,
         gamePaused: false,
         result: null,
         resultByForfeit: false,
