@@ -11,6 +11,7 @@ import {
   createStubDashboardRepository,
   createStubInvitationsRepository,
   createStubPairingRepository,
+  createTestPresence,
   createTestSessionRegistry,
   stubVerifier,
 } from '../testing';
@@ -58,6 +59,7 @@ beforeEach(async () => {
     dashboard: createStubDashboardRepository(),
     invitations: createStubInvitationsRepository(),
     sessions: createTestSessionRegistry(),
+    presence: createTestPresence(),
     realtime,
   }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));

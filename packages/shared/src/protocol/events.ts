@@ -37,20 +37,59 @@ export const EVENTS = {
     starting: 'lobby.starting',
     started: 'lobby.started',
     /**
-     * Client → server: "I am done, close this for both of us." Not in docs/04's list, and not the
-     * same thing as a disconnect — walking away on purpose should not leave your partner watching a
-     * 120-second countdown for somebody who is not coming back.
+     * Client → server: "I have navigated away from the game."
+     *
+     * The socket deliberately outlives the page (P-7), so routing from `/play` to `/dashboard` is
+     * invisible to the socket layer — and yet it is exactly as much of a walkout as closing the tab.
+     * This is the frame that makes the two the same event. Presence in a *session* is therefore
+     * "has a socket **and** is on the game's page", which is a stricter thing than being online.
+     */
+    away: 'lobby.away',
+    /**
+     * Client → server: "can we stop here?" — mid-match only.
+     *
+     * Leaving an active match needs the other person's agreement, because the alternative to a free
+     * exit is a forfeit, and a free exit nobody has to agree to is the one everybody would take.
+     */
+    leaveRequest: 'lobby.leave.request',
+    /** Client → server: answering one. The asker sends this too, to withdraw. */
+    leaveRespond: 'lobby.leave.respond',
+    /** Server → both: somebody has asked to stop, and until when. */
+    leaveRequested: 'lobby.leave.requested',
+    /** Server → both: how the asking ended, when it ended in the match carrying on. */
+    leaveResolved: 'lobby.leave.resolved',
+    /**
+     * Client → server: "I am done, close this for both of us." Not in docs/04's list.
+     *
+     * Only outside an active match: in the lobby, during a countdown, or on a results screen there
+     * is nothing at stake, so leaving needs nobody's permission. Inside one, `leaveRequest` is the
+     * way out.
      */
     leave: 'lobby.leave',
-    /** The session ended without finishing — a reconnect window ran out, or a player left. */
+    /** The session ended without finishing — a player left, or one of them forfeited. */
     ended: 'lobby.ended',
   },
   presence: {
+    /**
+     * Inside a session: somebody came or went. Carries the whole session view, like every other
+     * session frame.
+     */
     playerConnected: 'player.connected',
     playerDisconnected: 'player.disconnected',
     playerReconnected: 'player.reconnected',
     reconnectWindowStarted: 'session.reconnect_window_started',
     reconnectWindowExpired: 'session.reconnect_window_expired',
+    /**
+     * Outside a session: your partner opened their first socket, or closed their last one.
+     *
+     * Deliberately *not* the `player.*` names above. These two are couple-scoped and carry
+     * `PresencePayload`, not a session — they reach somebody standing on their dashboard with no
+     * game running at all. Sharing a name with the session frames meant every listener had to guess
+     * which kind it was holding by looking for a field, and every one of them guessed by dropping
+     * the frame.
+     */
+    partnerOnline: 'partner.online',
+    partnerOffline: 'partner.offline',
   },
   game: {
     actionRequest: 'game.action.request',

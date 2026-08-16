@@ -16,6 +16,7 @@ import {
   createStubDashboardRepository,
   createStubInvitationsRepository,
   createStubPairingRepository,
+  createTestPresence,
   stubVerifier,
   testInvitationView,
 } from '../testing';
@@ -26,6 +27,8 @@ let invitations: ReturnType<typeof createStubInvitationsRepository>;
 let realtime: ReturnType<typeof createRecordingNotifier>;
 let sessions: SessionRegistry;
 let users: ReturnType<typeof createInMemoryUsersRepository>;
+/** Who is online. A test that wants a partner out of reach flips this before it acts. */
+let online: Set<string>;
 
 /** The shape every refused action comes back as. */
 interface ApiError {
@@ -70,7 +73,9 @@ beforeEach(async () => {
   invitations = createStubInvitationsRepository();
   realtime = createRecordingNotifier();
   users = createInMemoryUsersRepository();
-  sessions = createSessionRegistry(realtime, { isOnline: () => true });
+  online = new Set([TEST_USER_ID, OTHER_USER_ID]);
+  const presence = createTestPresence((userId) => online.has(userId));
+  sessions = createSessionRegistry(realtime, presence);
 
   await users.create(TEST_USER_ID, { ...PROFILE }, 'AAAA1111');
   await users.create(
@@ -88,6 +93,7 @@ beforeEach(async () => {
     invitations,
     sessions,
     realtime,
+    presence,
   }).listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
 
@@ -154,6 +160,28 @@ describe('sending an invitation', () => {
     const response = await invite();
     expect(response.status).toBe(409);
     expect(((await response.json()) as ApiError).error.reason).toBe('already_in_game');
+  });
+
+  it('refuses when the partner is not signed in', async () => {
+    online.delete(OTHER_USER_ID);
+
+    // Otherwise this is five minutes of waiting for a sheet nobody will ever see, and it holds the
+    // couple's one invitation slot the whole time (ADR-010).
+    const response = await invite();
+    expect(response.status).toBe(409);
+
+    const body = (await response.json()) as ApiError;
+    expect(body.error.reason).toBe('partner_offline');
+    expect(body.error.message).toMatch(/offline/i);
+  });
+
+  it('refuses server-side, so a browser cannot simply not ask', async () => {
+    online.delete(OTHER_USER_ID);
+    await invite();
+
+    // Nothing was written. A check the client makes for itself is a check that can be skipped, and
+    // the invitation it would have created is a real row that has to expire on its own.
+    expect(realtime.recipientsOf(EVENTS.invitation.created)).toEqual([]);
   });
 
   it('closes the invitation it displaces before announcing the new one', async () => {

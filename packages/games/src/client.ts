@@ -26,6 +26,7 @@ export type GameLoader = () => Promise<{ default: GameComponent }>;
 
 const RENDERERS: Readonly<Record<string, GameLoader>> = {
   'reaction-speed': () => import('./reaction-speed/client'),
+  'four-in-a-row': () => import('./four-in-a-row/client'),
 };
 
 export function findGameRenderer(slug: string): GameLoader | null {

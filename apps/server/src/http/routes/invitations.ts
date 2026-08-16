@@ -7,7 +7,12 @@ import {
   InvitationError,
   type InvitationsRepository,
 } from '../../modules/invitations/invitationsRepository';
-import { SessionError, type SessionRegistry } from '../../modules/sessions/sessionRegistry';
+import type { PairingRepository } from '../../modules/pairing/pairingRepository';
+import {
+  SessionError,
+  type PresenceSource,
+  type SessionRegistry,
+} from '../../modules/sessions/sessionRegistry';
 import type { UsersRepository } from '../../modules/users/usersRepository';
 import type { RealtimeNotifier } from '../../ws/notifier';
 import { rateLimit } from '../rateLimit';
@@ -35,6 +40,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   session_not_found: 404,
   not_authorized: 403,
   invalid_game_state: 409,
+  partner_offline: 409,
 };
 
 function failed(error: unknown, res: Response): boolean {
@@ -52,6 +58,8 @@ export function createInvitationsRouter(
   sessions: SessionRegistry,
   users: UsersRepository,
   realtime: RealtimeNotifier,
+  pairing: PairingRepository,
+  presence: PresenceSource,
 ): Router {
   const router = Router();
   router.use(requireUser(verifier));
@@ -102,6 +110,18 @@ export function createInvitationsRouter(
         // this is the only place the two facts meet.
         if (sessions.sessionIdForUser(userId)) {
           throw new SessionError('already_in_game', 'You two already have a game going.');
+        }
+
+        // An invitation to somebody who is not signed in is five minutes of waiting for a sheet
+        // nobody will ever see. Refused here rather than only in the browser, because a check the
+        // client makes for itself is a check that can be skipped — and the invitation it creates is
+        // real, holds the couple's one slot (ADR-010), and has to expire on its own.
+        const partner = await pairing.findPartner(userId);
+        if (partner !== null && !presence.isOnline(partner.id)) {
+          throw new SessionError(
+            'partner_offline',
+            'They are offline. Try when they are online next time.',
+          );
         }
 
         const { invitation, otherUserId, invalidatedId } = await invitations.create(

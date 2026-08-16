@@ -5,7 +5,7 @@ import type { TokenVerifier } from '../auth/tokenVerifier';
 import type { DashboardRepository } from '../modules/dashboard/dashboardRepository';
 import type { InvitationsRepository } from '../modules/invitations/invitationsRepository';
 import type { PairingRepository } from '../modules/pairing/pairingRepository';
-import type { SessionRegistry } from '../modules/sessions/sessionRegistry';
+import type { PresenceSource, SessionRegistry } from '../modules/sessions/sessionRegistry';
 import type { UsersRepository } from '../modules/users/usersRepository';
 import type { RealtimeNotifier } from '../ws/notifier';
 import { logger } from '../logger';
@@ -14,6 +14,7 @@ import { requestLogger } from './requestLogger';
 import { createDashboardRouter } from './routes/dashboard';
 import { createInvitationsRouter } from './routes/invitations';
 import { createPairingRouter } from './routes/pairing';
+import { createPresenceRouter } from './routes/presence';
 import { createUsersRouter } from './routes/users';
 
 export interface AppOptions {
@@ -26,6 +27,13 @@ export interface AppOptions {
   invitations: InvitationsRepository;
   sessions: SessionRegistry;
   realtime: RealtimeNotifier;
+  /**
+   * Who is online, read from the same socket registry the sessions read.
+   *
+   * One source, so the header, the invitation gate and a live game can never disagree about whether
+   * somebody is here.
+   */
+  presence: PresenceSource;
 }
 
 const startedAt = Date.now();
@@ -39,6 +47,7 @@ export function createApp({
   invitations,
   sessions,
   realtime,
+  presence,
 }: AppOptions) {
   const app = express();
 
@@ -70,7 +79,11 @@ export function createApp({
   app.use('/api', createUsersRouter(verifier, users, realtime, pairingCodeLimit));
   app.use('/api', createPairingRouter(verifier, pairing, realtime, pairingCodeLimit));
   app.use('/api', createDashboardRouter(verifier, users, pairing, dashboard));
-  app.use('/api', createInvitationsRouter(verifier, invitations, sessions, users, realtime));
+  app.use('/api', createPresenceRouter(verifier, pairing, presence));
+  app.use(
+    '/api',
+    createInvitationsRouter(verifier, invitations, sessions, users, realtime, pairing, presence),
+  );
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: { code: 'not_found', message: 'Unknown endpoint.' } });

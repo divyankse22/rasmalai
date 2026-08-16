@@ -7,10 +7,12 @@
  */
 
 import type { AnyGameRules } from './contract';
+import { rules as fourInARow } from './four-in-a-row/server';
 import { rules as reactionSpeed } from './reaction-speed/server';
 
 const REGISTRY: Readonly<Record<string, AnyGameRules>> = {
   [reactionSpeed.meta.slug]: reactionSpeed,
+  [fourInARow.meta.slug]: fourInARow,
 };
 
 /**

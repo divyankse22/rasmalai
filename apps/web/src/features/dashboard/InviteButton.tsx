@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/design-system/Button';
+import { usePartnerPresence } from '@/features/presence/usePartnerPresence';
 import { postToApi } from '@/lib/clientApi';
 
 /**
@@ -14,12 +15,24 @@ import { postToApi } from '@/lib/clientApi';
  */
 export function InviteButton({ gameSlug, gameName }: { gameSlug: string; gameName: string }) {
   const router = useRouter();
+  const { refresh } = usePartnerPresence();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
   async function invite() {
     setBusy(true);
     setError(undefined);
+
+    // Asked at the moment of the press rather than trusted from the last poll: an invitation lives
+    // five minutes and holds the couple's one slot for all of it, so a stale "they're here" costs
+    // more than the round trip does. The server refuses this too — this only saves the wait and
+    // the dead invitation. A `null` answer means we could not tell, and not being able to tell is
+    // no reason to stop somebody playing.
+    if ((await refresh()) === false) {
+      setBusy(false);
+      setError('They are offline. Try when they are online next time.');
+      return;
+    }
 
     const result = await postToApi('/api/invitations', { gameSlug });
     setBusy(false);

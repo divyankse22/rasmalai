@@ -77,8 +77,25 @@ export interface RespondResult {
   accepted: boolean;
 }
 
+/** Just enough of the partner to name them and draw their face. */
+export interface PartnerProfile {
+  id: string;
+  nickname: string;
+  avatarKey: string;
+  gender: Gender;
+}
+
 export interface PairingRepository {
   getState(userId: string): Promise<PairingState>;
+  /**
+   * The one other person this user is allowed to know anything about, or null if unpaired.
+   *
+   * The narrow read behind every couple-scoped answer that needs the partner and nothing else —
+   * presence, the header's face, and deciding whether an invitation has anybody to reach. Derived
+   * from `couples` membership, never from anything the browser sends
+   * (`docs/03_DATABASE_SCHEMA.md`, important data rules).
+   */
+  findPartner(userId: string): Promise<PartnerProfile | null>;
   /** Reports on a code without acting on it, so the wizard can confirm the person first. */
   lookupCode(viewerId: string, pairingCode: string): Promise<PairingCodeLookup>;
   /**
@@ -198,6 +215,26 @@ export function createPairingRepository(pool: Pool): PairingRepository {
   return {
     getState(userId) {
       return readState(pool, userId);
+    },
+
+    async findPartner(userId) {
+      const { rows } = await pool.query<{
+        id: string;
+        nickname: string;
+        avatar_key: string;
+        gender: Gender;
+      }>(
+        `select u.id, u.nickname, u.avatar_key, u.gender
+           from public.couples c
+           join public.users u
+             on u.id = case when c.user_a_id = $1 then c.user_b_id else c.user_a_id end
+          where c.user_a_id = $1 or c.user_b_id = $1`,
+        [userId],
+      );
+
+      const row = rows[0];
+      if (!row) return null;
+      return { id: row.id, nickname: row.nickname, avatarKey: row.avatar_key, gender: row.gender };
     },
 
     async lookupCode(viewerId, pairingCode) {

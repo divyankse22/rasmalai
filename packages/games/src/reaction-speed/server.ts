@@ -202,8 +202,8 @@ export const rules: GameRules<ReactionSpeedState, ReactionSpeedAction, ReactionS
     windowMs: RECONNECT_WINDOW_MS,
     // A timed game must stop its clock, or the missing player loses rounds they were never shown.
     pauseOnDisconnect: true,
-    // P-8: nobody is awarded a win for their partner's bad wifi.
-    onExpire: 'abandon',
+    // Two minutes is long enough that this is walking out, not bad wifi.
+    onExpire: 'forfeit',
   },
 
   createMatch(now, context) {
@@ -315,6 +315,12 @@ export const rules: GameRules<ReactionSpeedState, ReactionSpeedAction, ReactionS
       case 'over':
         return state.round.nextRoundAt;
     }
+  },
+
+  // Nobody is ever on the clock to move here. Both players are waiting on the same stimulus, and
+  // being slow to it is what the game measures rather than something to be timed out for.
+  turnOf() {
+    return null;
   },
 
   pause(state, _now) {

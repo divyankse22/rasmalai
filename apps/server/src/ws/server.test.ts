@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EVENTS, createEnvelope, parseEnvelope, serializeEnvelope, type Envelope } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
 import { SessionError } from '../modules/sessions/sessionError';
-import type { SessionRegistry } from '../modules/sessions/sessionRegistry';
+import {
+  createSessionRegistry,
+  type SessionRegistry,
+} from '../modules/sessions/sessionRegistry';
+import { createNotifier } from './notifier';
+import { SocketRegistry } from './socketRegistry';
 import { WS_CLOSE, attachWebSocketServer, type RealtimeServer } from './server';
 
 /** Stands in for the JWKS verifier; token validity is covered by tokenVerifier.test.ts. */
@@ -59,6 +64,10 @@ function connect(): {
   };
 }
 
+function send(socket: WebSocket, type: string, payload: unknown): void {
+  socket.send(serializeEnvelope(createEnvelope(type, payload)));
+}
+
 function authenticate(socket: WebSocket, accessToken: string, requestId?: string): void {
   socket.send(serializeEnvelope(createEnvelope(EVENTS.connection.authenticate, { accessToken }, requestId)));
 }
@@ -97,6 +106,9 @@ interface Call {
 let calls: Call[];
 let refuseWith: SessionError | null;
 
+/** Set by a test that wants the caller to already be in a game when their socket opens. */
+let runningSessionId: string | null = null;
+
 const sessionsStub: SessionRegistry = {
   create() {
     throw new Error('sessions are not created over the socket');
@@ -105,7 +117,22 @@ const sessionsStub: SessionRegistry = {
     calls.push({ method: 'viewFor', args: [sessionId, userId] });
     return { id: sessionId } as unknown as ReturnType<SessionRegistry['viewFor']>;
   },
-  sessionIdForUser: () => null,
+  join(sessionId, userId) {
+    calls.push({ method: 'join', args: [sessionId, userId] });
+    return { id: sessionId } as unknown as ReturnType<SessionRegistry['viewFor']>;
+  },
+  markAway(...args) {
+    calls.push({ method: 'markAway', args });
+  },
+  requestLeave(...args) {
+    calls.push({ method: 'requestLeave', args });
+    if (refuseWith) throw refuseWith;
+  },
+  respondToLeave(...args) {
+    calls.push({ method: 'respondToLeave', args });
+    if (refuseWith) throw refuseWith;
+  },
+  sessionIdForUser: () => runningSessionId,
   setReady(...args) {
     calls.push({ method: 'setReady', args });
   },
@@ -130,6 +157,7 @@ const lastCall = (method: string): Call | undefined =>
 beforeEach(async () => {
   calls = [];
   refuseWith = null;
+  runningSessionId = null;
   httpServer = createServer();
   realtime = attachWebSocketServer(httpServer, {
     verifier,
@@ -162,6 +190,37 @@ describe('websocket handshake', () => {
     expect(frame.payload).toEqual({ userId: 'user-a' });
     expect(frame.requestId).toBe('req-1');
     expect(realtime.registry.isOnline('user-a')).toBe(true);
+    client.socket.close();
+  });
+
+  it('hands a game already in progress straight back, unasked', async () => {
+    runningSessionId = 'session-9';
+
+    const client = connect();
+    await open(client.socket);
+    authenticate(client.socket, 'good');
+
+    expect((await client.next()).type).toBe(EVENTS.connection.authenticated);
+
+    // The person this exists for is the one who refreshed on their dashboard mid-match: they are
+    // not on the game's page, so nothing they load fetches it, and the server only broadcasts on
+    // transitions — of which their reconnection is not one. Without this frame they forfeit two
+    // minutes later having never been told a clock was running.
+    const frame = await client.next();
+    expect(frame.type).toBe(EVENTS.lobby.joined);
+    expect(frame.payload).toEqual({ session: { id: 'session-9' } });
+    // Read, not joined: being handed the state is not a claim to be at the table.
+    expect(lastCall('join')).toBeUndefined();
+    client.socket.close();
+  });
+
+  it('says nothing about a game when there is not one', async () => {
+    const client = connect();
+    await open(client.socket);
+    authenticate(client.socket, 'good');
+
+    expect((await client.next()).type).toBe(EVENTS.connection.authenticated);
+    await expect(client.next()).rejects.toThrow(/timed out/);
     client.socket.close();
   });
 
@@ -318,10 +377,6 @@ describe('game frames', () => {
     return client;
   }
 
-  function send(socket: WebSocket, type: string, payload: unknown): void {
-    socket.send(serializeEnvelope(createEnvelope(type, payload)));
-  }
-
   it('hands an action to the session with the server’s own timing', async () => {
     const client = await player();
     const before = Date.now();
@@ -366,9 +421,14 @@ describe('game frames', () => {
     send(client.socket, EVENTS.game.actionRequest, { sessionId: 'session-1', action: {} });
 
     const frame = await client.next();
+    // Stamped with the session it was about. One socket serves the whole app, so a client that was
+    // not told which game an error belonged to would apply it to whichever one it happens to be
+    // showing — and the frame a page sends on its way out routinely arrives after the next game
+    // has already opened.
     expect(frame.payload).toEqual({
       code: 'invalid_action',
       message: 'That round has already finished.',
+      sessionId: 'session-1',
     });
     expect(client.socket.readyState).toBe(WebSocket.OPEN);
   });
@@ -402,5 +462,130 @@ describe('game frames', () => {
     expect(frame.payload).toMatchObject({ code: 'not_authenticated' });
     await expect(client.closed).resolves.toMatchObject({ code: WS_CLOSE.unauthenticated });
     expect(lastCall('submitAction')).toBeUndefined();
+  });
+});
+
+/**
+ * The socket layer and a real session registry, together.
+ *
+ * Everything above runs against a recording stub, which is the right shape for asking whether a
+ * frame was validated and passed on. It cannot answer the question this file most needs to answer:
+ * what two genuine clients do to a genuine session. The bug that prompted these was invisible to
+ * both halves on their own — every registry test joined both players before doing anything, and
+ * every socket test threw its frames at a stub that had no lifecycle to break.
+ */
+describe('two clients and a real session', () => {
+  let liveServer: Server;
+  let live: RealtimeServer;
+  let liveUrl: string;
+  let sessionId: string;
+
+  const liveConnect = (): ReturnType<typeof connect> => {
+    const socket = new WebSocket(liveUrl);
+    const received: Envelope[] = [];
+    socket.on('message', (raw) => {
+      const parsed = parseEnvelope(raw.toString());
+      if (parsed.ok) received.push(parsed.envelope);
+    });
+    return {
+      socket,
+      next: async () => {
+        await until(() => received.length > 0);
+        return received.shift()!;
+      },
+      closed: new Promise((resolve) => {
+        socket.on('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+      }),
+      // Every frame this client has been sent, for asserting on what it was and was not told.
+      seen: received,
+    } as ReturnType<typeof connect> & { seen: Envelope[] };
+  };
+
+  async function signIn(token: string) {
+    const client = liveConnect() as ReturnType<typeof connect> & { seen: Envelope[] };
+    await open(client.socket);
+    authenticate(client.socket, token);
+    await until(() =>
+      client.seen.some((frame) => frame.type === EVENTS.connection.authenticated),
+    );
+    return client;
+  }
+
+  beforeEach(async () => {
+    liveServer = createServer();
+    const registry = new SocketRegistry();
+    const sessions = createSessionRegistry(createNotifier(registry), registry);
+
+    live = attachWebSocketServer(liveServer, { verifier, registry, sessions });
+    liveServer.listen(0);
+    await new Promise((resolve) => liveServer.once('listening', resolve));
+
+    const address = liveServer.address();
+    if (address === null || typeof address === 'string') throw new Error('expected a TCP address');
+    liveUrl = `ws://127.0.0.1:${address.port}/ws`;
+
+    sessionId = sessions.create({
+      coupleId: 'couple-1',
+      gameSlug: 'reaction-speed',
+      gameName: 'Reaction Speed',
+      players: [
+        { userId: 'user-a', nickname: 'Ali', avatarKey: 'fox', gender: 'female' },
+        { userId: 'user-b', nickname: 'Bo', avatarKey: 'penguin', gender: 'male' },
+      ],
+    }).id;
+  });
+
+  afterEach(async () => {
+    await live.close();
+    await new Promise((resolve) => liveServer.close(resolve));
+  });
+
+  it('survives the first player joining, leaving and rejoining before the second arrives', async () => {
+    // The reported bug, over two real sockets. A session is created the moment an invitation is
+    // accepted and both of them navigate to it separately, so there is always a window where one is
+    // there and the other is still on the games list. A refresh inside that window — or, in
+    // development, React's deliberate double mount — used to end the game for both, and the second
+    // player arrived to `session_not_found` and "That game is no longer running."
+    const alice = await signIn('good');
+
+    send(alice.socket, EVENTS.lobby.join, { sessionId });
+    await until(() => alice.seen.some((frame) => frame.type === EVENTS.lobby.joined));
+    alice.seen.length = 0;
+
+    send(alice.socket, EVENTS.lobby.away, { sessionId });
+    send(alice.socket, EVENTS.lobby.join, { sessionId });
+    await until(() => alice.seen.some((frame) => frame.type === EVENTS.lobby.joined));
+
+    expect(alice.seen.some((frame) => frame.type === EVENTS.error)).toBe(false);
+    expect(alice.seen.some((frame) => frame.type === EVENTS.lobby.ended)).toBe(false);
+
+    // And the whole point: the partner, arriving late, finds a game.
+    const bob = await signIn('good-b');
+    bob.seen.length = 0;
+    send(bob.socket, EVENTS.lobby.join, { sessionId });
+
+    await until(() => bob.seen.some((frame) => frame.type === EVENTS.lobby.joined));
+    expect(bob.seen.some((frame) => frame.type === EVENTS.error)).toBe(false);
+
+    alice.socket.close();
+    bob.socket.close();
+  });
+
+  it('names the session on an error, so a client can tell whose it is', async () => {
+    const alice = await signIn('good');
+    alice.seen.length = 0;
+
+    // The frame a page sends on its way out, arriving after that session has gone. Without the id
+    // on it, the next screen would read this as its own game ending.
+    send(alice.socket, EVENTS.lobby.away, { sessionId: 'a-session-that-has-ended' });
+
+    await until(() => alice.seen.some((frame) => frame.type === EVENTS.error));
+    const error = alice.seen.find((frame) => frame.type === EVENTS.error)!;
+
+    expect(error.payload).toMatchObject({
+      code: 'session_not_found',
+      sessionId: 'a-session-that-has-ended',
+    });
+    alice.socket.close();
   });
 });

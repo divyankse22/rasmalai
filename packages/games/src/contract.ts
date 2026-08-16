@@ -56,8 +56,18 @@ export interface ReconnectPolicy {
    * absent player loses rounds they were never shown.
    */
   pauseOnDisconnect: boolean;
-  /** What the platform does when the window runs out. Individual matches abandon (P-8). */
-  onExpire: 'abandon' | 'restart';
+  /**
+   * What the platform does when the window runs out on an **individual** match.
+   *
+   * `forfeit` is the default: somebody who leaves their partner waiting for two minutes loses, and
+   * a competitive game awards the win to whoever stayed. Games with no winner to award (P-3) simply
+   * stop, whatever they declare here.
+   *
+   * Tournaments override this — `docs/04` section 6 and CLAUDE.md both require a failed reconnect
+   * there to **restart** the affected game rather than hand over points, so the platform decides by
+   * session mode and a game never has to know which kind of match it is in.
+   */
+  onExpire: 'forfeit' | 'restart';
 }
 
 /**
@@ -146,6 +156,18 @@ export interface GameRules<State, Action, View> {
 
   /** The clock reached `nextTickAt`. Timed games advance here; turn-based games do nothing. */
   tick(state: State, now: number, context: GameContext): Transition<State>;
+
+  /**
+   * The seat this game is waiting on, or null when it is waiting on time rather than on a person.
+   *
+   * The platform runs the move clock from this and decides what running out of it means. A game
+   * says who is holding things up; it never says who loses for it — that is a result, and results
+   * belong to the platform, which is the only thing that knows whether this is a friendly or a
+   * tournament game.
+   *
+   * A game with no turns at all returns null and is never asked for a move.
+   */
+  turnOf(state: State): PlayerIndex | null;
 
   /**
    * When `tick` next needs calling, or null when the game is waiting on a player rather than on

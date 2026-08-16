@@ -186,21 +186,44 @@ limitation, accepted for V1** — persisting live match state is exactly the com
 tells us not to add yet.
 
 **Reconnection.** Each game declares
-`{ windowMs: 120000, pauseOnDisconnect, restoreState, onExpire }`.
+`{ windowMs: 120000, pauseOnDisconnect, restoreState, onExpire }`, and names the seat it is waiting
+on through `turnOf`.
 
 ```text
-last socket for a player closes during an active session
-  → partner sees a friendly reconnecting state
+a player stops being present, or is the one on the move
+  → the other sees a friendly waiting state
   → session.reconnect_window_started, authoritative clock pauses
-  → reconnect inside 120s → full state snapshot → 3-2-1 resume
-  → window expires → onExpire
+  → back (or moved) inside 120s → full state snapshot → resume
+  → window expires → whoever is at fault loses it
 ```
 
-`onExpire` defaults: **individual match → abandon**, written as an `abandoned` row that counts
-toward nothing per **P-8** (nothing in the specs awards a win for a disconnect); **tournament game
-→ restart**, as `docs/04` requires. After two consecutive failed restarts of the same tournament
-game, the tournament moves to `paused` and is resumable from the dashboard rather than restarting
-forever.
+**One clock, 120 seconds, and it does not care why.** Being away and being on the move are the two
+ways onto it, and they are treated identically: from the other side of the board there is no
+difference between a partner who dropped off and one who is sitting there not playing, and no
+reason the two should be waited on differently. The move clock does not run while anybody is away,
+because the registry refuses actions then and timing somebody out for obeying the rules would be
+indefensible.
+
+`onExpire` defaults: **individual match → forfeit**, awarded 1–0 to whoever stayed with
+`byForfeit` set so the screen can say what happened rather than print a scoreline; **tournament
+game → restart**, as `docs/04` requires. After two consecutive failed restarts of the same
+tournament game, the tournament moves to `paused` and is resumable from the dashboard rather than
+restarting forever. Games with no winner to award (P-3) simply stop, whatever they declare.
+
+> **Amended.** This originally read *individual match → abandon*, on the grounds that nothing in
+> the specs awards a win for a disconnect. Two minutes is long enough that it is not a disconnect,
+> it is walking out — and the alternative punished the player who *stayed* by taking their match
+> away from them. **P-8 is unchanged and still decides the rest:** an ending where nobody was left
+> waiting counts towards nothing. That covers an agreed stop, a backend restart, and the case
+> below.
+
+**Both of them gone.** The window runs for each of them separately, and the session resolves at the
+**later** of the two deadlines — deciding at the first would end the match while the other still
+had time to come back and claim it. Whoever is in the room when it resolves is the last one there
+and takes it; if neither of them is, nobody won anything and the session closes under P-8. The same
+window runs outside a match, where nothing is at stake but a session both of them have walked away
+from still has to stop holding the couple's one slot (ADR-009). This is also what stops the first
+player to open a lobby from destroying it with a refresh before the second has loaded the page.
 
 ---
 

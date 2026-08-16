@@ -1,9 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import type { ActionTiming, AnyGameRules, GameContext, GameResult, PlayerIndex } from '@rasmalai/games';
+import {
+  PLAYERS,
+  type ActionTiming,
+  type AnyGameRules,
+  type GameContext,
+  type GameResult,
+  type PlayerIndex,
+} from '@rasmalai/games';
 import { findGameRules } from '@rasmalai/games/server';
 import {
   COUNTDOWN_MS,
   EVENTS,
+  LEAVE_REQUEST_TTL_MS,
+  MOVE_WINDOW_MS,
   RECONNECT_WINDOW_MS,
   type MatchResultView,
   type Reaction,
@@ -33,6 +42,47 @@ export { SessionError } from './sessionError';
  * A session outlives the match inside it. Finishing puts it on the results screen with both players
  * unready; both readying again starts another match in the same session, which is what makes a
  * rematch a rematch rather than a second invitation.
+ *
+ * ## Being here, and leaving
+ *
+ * A player is **present** when they have a socket *and* are on the game's page. The socket outlives
+ * the page on purpose (P-7), so without the second half, routing to the dashboard mid-match would be
+ * invisible while closing the tab was not — two identical walkouts treated completely differently.
+ *
+ * Leaving an active match therefore has exactly two shapes:
+ *
+ * - **Asked for.** `requestLeave` puts it to the other person, who has 30 seconds to agree. Agreed,
+ *   the session closes with no result and counts towards nothing — this is the P-8 case, and the
+ *   only free way out of a match.
+ * - **Taken.** Run down the clock, and the match is forfeit: a competitive game is awarded to
+ *   whoever stayed, and one with no winner to award simply stops.
+ *
+ * The asymmetry is the point. A free exit that needed nobody's agreement would be the one everybody
+ * took, and the forfeit would never fire.
+ *
+ * ## The clock
+ *
+ * There is one clock and it is always 120 seconds, because from the other side of the board there
+ * is no difference between a partner who dropped off and one who is sitting there not playing.
+ * Two things put somebody on it:
+ *
+ * - **Being away.** Every player who is not present has their own `awayUntil`. Both of them can be
+ *   on it at once, which is the whole reason it is per player rather than per session.
+ * - **Being on the move.** During an active match, whoever the game says it is waiting on has
+ *   `MOVE_WINDOW_MS` to move. It restarts when the turn changes, and it does not run at all while
+ *   anybody is away — the registry refuses actions then, and timing somebody out for not making a
+ *   move it would have rejected is indefensible.
+ *
+ * When the clock runs out, whoever is **at fault** loses, and that is the only rule:
+ *
+ * - one at fault → the other player takes it (competitive) or the game simply stops (P-3);
+ * - both at fault → nobody won anything, and the session closes counting towards nothing (P-8);
+ *
+ * Both at fault is the case that used to close a session the instant the second person stepped
+ * away. It no longer does: the window runs for both of them, and whoever gets back inside it is the
+ * last one left in the room. That also stops the *first* player to arrive from tearing the session
+ * down before the second one has even loaded the page — a refresh at the wrong moment used to end a
+ * game neither of them had started.
  */
 
 export interface SessionPlayerSeed {
@@ -44,6 +94,34 @@ export interface SessionPlayerSeed {
 
 interface PlayerState extends SessionPlayerSeed {
   ready: boolean;
+  /**
+   * Whether their client says it is on this session's page.
+   *
+   * Set by `lobby.join`, cleared by `lobby.away` — and cleared when their last socket closes, since
+   * a client that comes back always re-joins (`PlayScreen` joins on every transition into
+   * `connected`). Leaving it set across a disconnect meant somebody who closed the game tab and
+   * reappeared on their dashboard counted as back at the table.
+   */
+  onPage: boolean;
+  /**
+   * The last presence we actually acted on, for edge detection only.
+   *
+   * Presence itself is always recomputed from the truth (`isPresent`), so a view can never go stale
+   * behind a missed event. This exists so that arriving twice does not clear a window twice, and so
+   * that a socket dropping for somebody who had already navigated away is the non-event it is.
+   */
+  wasPresent: boolean;
+  /** Whether they have ever been here, which is what makes an arrival a *return*. */
+  everPresent: boolean;
+  /** Epoch ms when their 120 seconds run out, or null while they are here. */
+  awayUntil: number | null;
+}
+
+/** A pending "can we stop here?". */
+interface LeaveRequest {
+  byUserId: string;
+  expiresAt: number;
+  timer: NodeJS.Timeout;
 }
 
 interface Session {
@@ -57,18 +135,32 @@ interface Session {
   /** Where to return if a countdown is called off — the lobby, or the results screen. */
   phaseBeforeCountdown: SessionPhase;
   startsAt: number | null;
-  reconnectDeadline: number | null;
-  /** Who we are waiting for, while a reconnect window is open. */
-  awaiting: string | null;
+  /** The seat currently on the move clock, or null when nobody is. */
+  turnSeat: PlayerIndex | null;
+  /** Epoch ms that seat's move is due by. Null exactly when `turnSeat` is. */
+  turnDeadline: number | null;
   /** The match being played, or the one just finished while the results are on screen. */
   game: RunningMatch | null;
+  /** Whether the match's own clock is currently stopped, so it is neither paused nor resumed twice. */
+  gamePaused: boolean;
   result: GameResult | null;
+  /** Whether that result was won on the board or by the other player never coming back. */
+  resultByForfeit: boolean;
+  /** A pending request to stop, which only exists during an active match. */
+  leaveRequest: LeaveRequest | null;
+  /**
+   * Individual or tournament. Tournaments restart a game whose player never came back rather than
+   * awarding it (`docs/04` section 6), so the platform decides the consequence and no game module
+   * has to know which kind of match it is in. Slice 9 starts setting this to anything else.
+   */
+  mode: 'individual' | 'tournament';
   /** P-3: only a competitive game's result is a win over somebody. */
   competitive: boolean;
   /** Whether this game's clock stops when a player drops, from its reconnect policy. */
   pauseOnDisconnect: boolean;
   countdownTimer: NodeJS.Timeout | undefined;
-  reconnectTimer: NodeJS.Timeout | undefined;
+  /** The one timer for both kinds of deadline, always armed to whichever comes first. */
+  clockTimer: NodeJS.Timeout | undefined;
 }
 
 /** What the registry needs from the socket layer, kept narrow so it can be faked in tests. */
@@ -96,11 +188,29 @@ export interface SessionRegistry {
   }): SessionView;
   /** The view of a session as one of its players sees it. Throws if they are not in it. */
   viewFor(sessionId: string, userId: string): SessionView;
+  /**
+   * They are on the session's page: mark them present and hand back where things stand.
+   *
+   * Doubles as the resync after a dropped socket, which is why it returns the whole view rather
+   * than a patch — one frame, and the client is exactly where the server is.
+   */
+  join(sessionId: string, userId: string): SessionView;
+  /** They navigated away from the page. Their socket is still open; they are still not here. */
+  markAway(sessionId: string, userId: string): void;
   sessionIdForUser(userId: string): string | null;
   setReady(sessionId: string, userId: string, ready: boolean): void;
   /** An intent from a player. The game validates it; the platform never reads it. */
   submitAction(sessionId: string, userId: string, action: unknown, at: ActionTiming): void;
-  /** A deliberate exit, which closes the session for both of them. */
+  /** Mid-match: ask the other person whether you can both stop. */
+  requestLeave(sessionId: string, userId: string): void;
+  /** Answering one. From the asker, `accept: false` withdraws it. */
+  respondToLeave(sessionId: string, userId: string, accept: boolean): void;
+  /**
+   * A deliberate exit, which closes the session for both of them.
+   *
+   * Refused during an active match while the other player is here — that is what `requestLeave` is
+   * for. Allowed once they are gone, because there is nobody left to ask.
+   */
   leave(sessionId: string, userId: string): void;
   react(sessionId: string, userId: string, reaction: Reaction): void;
   /** Called by the socket layer when a person's last socket closes, or their first one opens. */
@@ -127,6 +237,11 @@ export function createSessionRegistry(
     throw new SessionError('not_authorized', 'That session is not yours.');
   }
 
+  /** Here, in the sense that matters: signed in *and* looking at the game. */
+  function isPresent(player: PlayerState): boolean {
+    return presence.isOnline(player.userId) && player.onPage;
+  }
+
   function playerView(player: PlayerState): SessionPlayer {
     return {
       userId: player.userId,
@@ -136,16 +251,24 @@ export function createSessionRegistry(
       // Presence is asked for at read time rather than cached, so it cannot go stale behind a
       // missed event.
       online: presence.isOnline(player.userId),
+      present: isPresent(player),
+      awayUntil: player.awayUntil,
       ready: player.ready,
     };
   }
 
-  function resultView(result: GameResult, seat: PlayerIndex, competitive: boolean): MatchResultView {
+  function resultView(
+    result: GameResult,
+    seat: PlayerIndex,
+    competitive: boolean,
+    byForfeit: boolean,
+  ): MatchResultView {
     return {
       outcome: result.draw ? 'drawn' : result.winner === seat ? 'won' : 'lost',
       yourScore: result.scores[seat],
       theirScore: result.scores[otherSeat(seat)],
       competitive,
+      byForfeit,
     };
   }
 
@@ -164,9 +287,15 @@ export function createSessionRegistry(
       // The game renders itself from this and nothing else, so every frame is a complete picture
       // and a client that missed one is never subtly behind.
       game: session.game ? { slug: session.game.slug, state: session.game.viewFor(seat) } : null,
-      result: session.result ? resultView(session.result, seat, session.competitive) : null,
+      result: session.result
+        ? resultView(session.result, seat, session.competitive, session.resultByForfeit)
+        : null,
       startsAt: session.startsAt,
-      reconnectDeadline: session.reconnectDeadline,
+      turnUserId: session.turnSeat === null ? null : session.players[session.turnSeat].userId,
+      turnDeadline: session.turnDeadline,
+      leaveRequest: session.leaveRequest
+        ? { byUserId: session.leaveRequest.byUserId, expiresAt: session.leaveRequest.expiresAt }
+        : null,
     };
   }
 
@@ -183,11 +312,156 @@ export function createSessionRegistry(
     emitter.sendToUser(player.userId, type, { session: view(session, player.userId) });
   }
 
+  /** Drops a pending request without telling anybody. The caller says what happened, if anything. */
+  function dropLeaveRequest(session: Session): void {
+    if (session.leaveRequest) clearTimeout(session.leaveRequest.timer);
+    session.leaveRequest = null;
+  }
+
   function clearTimers(session: Session): void {
     if (session.countdownTimer) clearTimeout(session.countdownTimer);
-    if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
+    if (session.clockTimer) clearTimeout(session.clockTimer);
     session.countdownTimer = undefined;
-    session.reconnectTimer = undefined;
+    session.clockTimer = undefined;
+    dropLeaveRequest(session);
+  }
+
+  /**
+   * The seat that should be on the move clock right now, if any.
+   *
+   * Null while anybody is away, deliberately: `submitAction` refuses every action in that state, so
+   * putting the other player on a clock they are not allowed to beat would be timing them out for
+   * obeying the rules. Their partner's away clock is already running, and it is the one that
+   * decides this.
+   */
+  function turnSeatNow(session: Session): PlayerIndex | null {
+    if (session.phase !== 'active' || !session.game) return null;
+    if (session.players.some((player) => player.awayUntil !== null)) return null;
+    return session.game.turnOf();
+  }
+
+  /**
+   * When the clock next needs looking at, or null when nobody is on one.
+   *
+   * The away half resolves at the **latest** pending deadline rather than the earliest. Two people
+   * who walk off at different moments are each on their own 120 seconds, and deciding the match at
+   * the first of them would end it while the other still had time left to come back and claim it.
+   */
+  function nextDeadline(session: Session): number | null {
+    const away = session.players
+      .map((player) => player.awayUntil)
+      .filter((until): until is number => until !== null);
+
+    const candidates: number[] = [];
+    if (away.length > 0) candidates.push(Math.max(...away));
+    if (session.turnDeadline !== null) candidates.push(session.turnDeadline);
+
+    return candidates.length === 0 ? null : Math.min(...candidates);
+  }
+
+  /**
+   * Points the move clock at whoever is on it, and arms the single timer.
+   *
+   * Called after anything that could change either — a move, an arrival, a departure, a phase
+   * change — and always *before* the frame announcing it goes out, so no client is ever shown a
+   * clock the server has already moved on from.
+   *
+   * The deadline is only restarted when the seat actually changes hands. Re-running this for an
+   * unrelated reason must not quietly hand the player on the move another two minutes.
+   */
+  function syncClocks(session: Session): void {
+    const seat = turnSeatNow(session);
+    if (seat !== session.turnSeat) {
+      session.turnSeat = seat;
+      session.turnDeadline = seat === null ? null : now() + MOVE_WINDOW_MS;
+    }
+
+    if (session.clockTimer) clearTimeout(session.clockTimer);
+    session.clockTimer = undefined;
+
+    const at = nextDeadline(session);
+    if (at === null) return;
+
+    // The floor of a millisecond is the same guard `matchRunner` needs: Node may run a timer a hair
+    // before its deadline, and a resolution that arrives early has to re-arm rather than decide a
+    // match on a clock that has not actually run out.
+    session.clockTimer = setTimeout(() => resolveClock(session), Math.max(1, at - now()));
+  }
+
+  /** Whether this seat is the reason the clock ran out. */
+  function atFault(session: Session, seat: PlayerIndex, at: number): boolean {
+    const player = session.players[seat];
+    if (player.awayUntil !== null && player.awayUntil <= at) return true;
+    return session.turnDeadline !== null && session.turnDeadline <= at && session.turnSeat === seat;
+  }
+
+  /**
+   * The clock ran out. Whoever is at fault loses, and that is the whole rule.
+   *
+   * Both at fault is not a draw and not a forfeit — it is nobody having been there to win, so the
+   * session simply stops and counts towards nothing (P-8). Awarding it to the one who happened to
+   * leave second would be scoring a match on which of them closed a laptop later.
+   */
+  function resolveClock(session: Session): void {
+    session.clockTimer = undefined;
+
+    const at = nextDeadline(session);
+    if (at === null) return;
+    if (at > now()) {
+      syncClocks(session);
+      return;
+    }
+
+    // Nobody is here at all — including the case where a session was opened and neither of them
+    // ever loaded the page. Nothing to hold open, nothing to award, and the couple is freed to
+    // start something else (ADR-009).
+    if (!session.players.some(isPresent)) {
+      broadcast(session, EVENTS.presence.reconnectWindowExpired);
+      endSession(session, 'abandoned', 'abandoned');
+      return;
+    }
+
+    // Outside a match there is nothing at stake, so a window running out just stops being one. The
+    // person who stayed keeps their lobby or their results screen, and the clock only comes back if
+    // they walk off too.
+    if (session.phase !== 'active') {
+      for (const player of session.players) player.awayUntil = null;
+      syncClocks(session);
+      broadcast(session, EVENTS.presence.reconnectWindowExpired);
+      return;
+    }
+
+    // Tournaments restart the affected game instead of awarding it — one dropped connection must
+    // not hand over points in a standings table (`docs/04` section 6, CLAUDE.md). Slice 9 is what
+    // makes this branch reachable.
+    if (session.mode === 'tournament') {
+      broadcast(session, EVENTS.presence.reconnectWindowExpired);
+      endSession(session, 'abandoned', 'abandoned');
+      return;
+    }
+
+    const blamed = PLAYERS.filter((seat) => atFault(session, seat, now()));
+    if (blamed.length === 0) {
+      // Unreachable: every deadline `nextDeadline` can return belongs to a seat, so something that
+      // has expired always has somebody behind it. Handled anyway, and handled by *clearing* rather
+      // than re-arming — re-arming on the same expired deadline would spin this timer as fast as
+      // the event loop can run it, which is a far worse failure than a lost clock.
+      logger.error({ sessionId: session.id }, 'a clock expired with nobody on it');
+      for (const player of session.players) player.awayUntil = null;
+      session.turnSeat = null;
+      session.turnDeadline = null;
+      syncClocks(session);
+      return;
+    }
+
+    broadcast(session, EVENTS.presence.reconnectWindowExpired);
+
+    if (blamed.length === session.players.length) {
+      endSession(session, 'abandoned', 'abandoned');
+      return;
+    }
+
+    forfeit(session, session.players[blamed[0]!].userId);
   }
 
   function forget(session: Session): void {
@@ -207,8 +481,9 @@ export function createSessionRegistry(
   ): void {
     session.phase = phase;
     session.startsAt = null;
-    session.reconnectDeadline = null;
-    session.awaiting = null;
+    session.turnSeat = null;
+    session.turnDeadline = null;
+    for (const player of session.players) player.awayUntil = null;
     clearTimers(session);
     session.game?.stop();
     broadcast(session, EVENTS.lobby.ended, {
@@ -219,15 +494,56 @@ export function createSessionRegistry(
   }
 
   /** The match is over. The session is not: this is the results screen, and a rematch starts here. */
-  function finishMatch(session: Session, result: GameResult): void {
+  function finishMatch(session: Session, result: GameResult, byForfeit = false): void {
     session.phase = 'finished';
     session.result = result;
+    session.resultByForfeit = byForfeit;
     session.startsAt = null;
+    // Nothing is pending against a match that has ended — including a request to stop it.
+    dropLeaveRequest(session);
     // Both unready, so a rematch needs both of them to say so rather than one dragging the other
     // off a results screen they have not read.
     for (const player of session.players) player.ready = false;
+    // Nobody is on a move clock while a result is on screen — but an away clock still is, so the
+    // session cannot sit here forever with neither of them reading it.
+    syncClocks(session);
 
     broadcast(session, EVENTS.results.matchResult);
+  }
+
+  /**
+   * One player ran the clock out while a match was running — by staying away, or by never moving.
+   *
+   * A competitive game is awarded to whoever stayed — 1–0, like a walkover, rather than freezing
+   * whatever the board happened to show, because "you win, 1–3" is not a sentence anybody should
+   * read. `byForfeit` is what lets the screen say what actually happened instead.
+   *
+   * A cooperative, social or casual game has no winner to award (P-3), so it simply stops and says
+   * who did not come back. Awarding one would be inventing a competition the game does not have.
+   *
+   * The session is left alive on its results screen rather than torn down, so the person who
+   * wandered off finds out why when they come back — and so the two of them can rematch if they
+   * want to. It cleans itself up as soon as neither of them is here.
+   */
+  function forfeit(session: Session, awayUserId: string): void {
+    const awaySeat = seatOf(session, awayUserId);
+    const stayed = otherSeat(awaySeat);
+
+    // The window that just ran out is spent. Leaving the expired deadlines in place would have the
+    // clock resolve itself again the instant it was re-armed.
+    for (const player of session.players) player.awayUntil = null;
+    session.turnSeat = null;
+    session.turnDeadline = null;
+    session.game?.stop();
+
+    if (!session.competitive) {
+      endSession(session, 'abandoned', 'forfeited', awayUserId);
+      return;
+    }
+
+    const scores: [number, number] = stayed === 0 ? [1, 0] : [0, 1];
+    logger.info({ sessionId: session.id, awayUserId }, 'match forfeited');
+    finishMatch(session, { winner: stayed, draw: false, scores }, true);
   }
 
   /** Hands the session over to the game module. Everything from here is the game's decision. */
@@ -244,6 +560,7 @@ export function createSessionRegistry(
 
     session.game?.stop();
     session.result = null;
+    session.resultByForfeit = false;
     session.competitive = rules.meta.scoringKind === 'competitive';
     session.pauseOnDisconnect = rules.reconnectPolicy.pauseOnDisconnect;
 
@@ -253,6 +570,9 @@ export function createSessionRegistry(
       ...(random ? { random } : {}),
       emitter: {
         emit(type, to) {
+          // Before the frame goes out, never after: a move that passed the turn has moved the clock
+          // with it, and the frame announcing the move is the one that has to carry the new one.
+          syncClocks(session);
           if (to === undefined) broadcast(session, type);
           else emitToSeat(session, to, type);
         },
@@ -261,13 +581,17 @@ export function createSessionRegistry(
         },
       },
     });
+
+    session.gamePaused = false;
+    // Whoever the game opened on starts their two minutes now.
+    syncClocks(session);
   }
 
   /** Both ready and both here — start the shared clock. */
   function maybeStartCountdown(session: Session): void {
-    const everyoneReady = session.players.every(
-      (player) => player.ready && presence.isOnline(player.userId),
-    );
+    // Present, not merely online: a countdown that fires for somebody reading their dashboard
+    // starts a match one of them cannot see.
+    const everyoneReady = session.players.every((player) => player.ready && isPresent(player));
     // A rematch counts down from the results screen, so `finished` is a place a countdown can start
     // from just as much as the lobby is.
     if (!everyoneReady || (session.phase !== 'lobby' && session.phase !== 'finished')) return;
@@ -304,6 +628,98 @@ export function createSessionRegistry(
     return session;
   }
 
+  /** They are back: close the window being held for them and pick up where things stood. */
+  function arrived(session: Session, seat: PlayerIndex): void {
+    const player = session.players[seat];
+    // Arriving for the first time is not coming back, and must not read as one — every session
+    // starts with both of them elsewhere, so without this the first person through the door would
+    // be announced as a reconnection.
+    const returning = player.everPresent;
+
+    player.everPresent = true;
+    player.awayUntil = null;
+
+    // Only once *nobody* is missing. One of two absent players coming back is not the moment to
+    // start the game running again for the one who is still gone.
+    if (session.gamePaused && session.players.every((candidate) => candidate.awayUntil === null)) {
+      // Restarted rather than resumed mid-flight: the round they missed is thrown away and a fresh
+      // one is armed, so neither of them is scored on a moment nobody could see. A game that keeps
+      // its board across a disconnect asks for none of this and gets none of it.
+      session.game?.resume();
+      session.gamePaused = false;
+    }
+
+    // Read after the state settles, so the frame answering a reconnect already shows the clock as
+    // it now stands rather than one still counting down against the person reading it. Whoever is
+    // on the move gets a fresh two minutes, having spent the last one unable to play at all.
+    syncClocks(session);
+
+    broadcast(session, EVENTS.presence.playerConnected);
+    if (returning) broadcast(session, EVENTS.presence.playerReconnected);
+    // A resumed countdown restarts from the top rather than continuing from wherever it was, so the
+    // person who just came back gets the same 3-2-1 as the one who waited.
+    maybeStartCountdown(session);
+  }
+
+  /**
+   * They are gone — tab closed, connection dropped, or simply looking at something else.
+   *
+   * Their 120 seconds start here, and they start whatever the phase is. A lobby or a results screen
+   * has nothing to forfeit, but a session both of them have walked away from still has to stop:
+   * held open, it blocks every future invitation this couple sends until the process restarts
+   * (ADR-009).
+   */
+  function left(session: Session, seat: PlayerIndex): void {
+    const player = session.players[seat];
+
+    // Nobody can be ready while they are gone. Clearing it stops a countdown from firing for a
+    // player who is not there to see it.
+    player.ready = false;
+    abandonCountdown(session);
+
+    // A request nobody is left to answer, or one made by somebody who has since walked out.
+    if (session.leaveRequest) {
+      dropLeaveRequest(session);
+      broadcast(session, EVENTS.lobby.leaveResolved, { outcome: 'withdrawn' });
+    }
+
+    player.awayUntil = now() + RECONNECT_WINDOW_MS;
+
+    // The match's clock stops before anyone is told, so the frame announcing the window already
+    // shows a paused game rather than one still counting down towards a player who cannot see it.
+    if (session.phase === 'active' && session.pauseOnDisconnect && !session.gamePaused) {
+      session.game?.pause();
+      session.gamePaused = true;
+    }
+
+    syncClocks(session);
+
+    // Two names for the same fact, kept apart because they mean different things on screen: one is
+    // "they stepped out", the other is "and here is what it costs".
+    broadcast(
+      session,
+      session.phase === 'active'
+        ? EVENTS.presence.reconnectWindowStarted
+        : EVENTS.presence.playerDisconnected,
+    );
+  }
+
+  /**
+   * Applies whatever presence now says, if it has changed.
+   *
+   * Every route in and out — a socket opening or closing, a page joined or navigated away from —
+   * arrives here, so there is exactly one place that decides what leaving means.
+   */
+  function syncPresence(session: Session, seat: PlayerIndex): void {
+    const player = session.players[seat];
+    const present = isPresent(player);
+    if (present === player.wasPresent) return;
+
+    player.wasPresent = present;
+    if (present) arrived(session, seat);
+    else left(session, seat);
+  }
+
   return {
     get size() {
       return byId.size;
@@ -317,38 +733,69 @@ export function createSessionRegistry(
         throw new SessionError('already_in_game', 'You two already have a game going.');
       }
 
+      // Neither of them is on the page yet — the invitation was accepted from wherever they
+      // happened to be standing, and they navigate to it next. They are therefore both already on
+      // the clock, which is what stops a session nobody ever loads from sitting in the map holding
+      // the couple's one slot for the rest of the process's life (ADR-009).
+      const openedAt = now() + RECONNECT_WINDOW_MS;
+
       const session: Session = {
         id: randomUUID(),
         coupleId,
         gameSlug,
         gameName,
         players: [
-          { ...players[0], ready: false },
-          { ...players[1], ready: false },
+          { ...players[0], ready: false, onPage: false, wasPresent: false, everPresent: false, awayUntil: openedAt },
+          { ...players[1], ready: false, onPage: false, wasPresent: false, everPresent: false, awayUntil: openedAt },
         ],
         phase: 'lobby',
         phaseBeforeCountdown: 'lobby',
         startsAt: null,
-        reconnectDeadline: null,
-        awaiting: null,
+        turnSeat: null,
+        turnDeadline: null,
         game: null,
+        gamePaused: false,
         result: null,
+        resultByForfeit: false,
+        leaveRequest: null,
+        mode: 'individual',
         competitive: false,
         pauseOnDisconnect: true,
         countdownTimer: undefined,
-        reconnectTimer: undefined,
+        clockTimer: undefined,
       };
 
       byId.set(session.id, session);
       byCouple.set(coupleId, session.id);
       byUser.set(players[0].userId, session.id);
       byUser.set(players[1].userId, session.id);
+      syncClocks(session);
 
       return view(session, players[0].userId);
     },
 
     viewFor(sessionId, userId) {
       return view(requireSession(sessionId), userId);
+    },
+
+    join(sessionId, userId) {
+      const session = requireSession(sessionId);
+      // Authorization before anything else: knowing an id is not permission to be in a session.
+      const seat = seatOf(session, userId);
+
+      session.players[seat].onPage = true;
+      syncPresence(session, seat);
+      // Read after syncing, so the frame that answers a reconnect already shows the window closed
+      // rather than one still counting down against the person reading it.
+      return view(session, userId);
+    },
+
+    markAway(sessionId, userId) {
+      const session = requireSession(sessionId);
+      const seat = seatOf(session, userId);
+
+      session.players[seat].onPage = false;
+      syncPresence(session, seat);
     },
 
     sessionIdForUser(userId) {
@@ -392,7 +839,8 @@ export function createSessionRegistry(
       if (session.phase !== 'active' || !session.game) {
         throw new SessionError('invalid_game_state', 'Nothing is being played right now.');
       }
-      if (session.awaiting !== null) {
+      // Nobody is played around while they are missing, whichever of the two it is.
+      if (session.players.some((player) => player.awayUntil !== null)) {
         throw new SessionError('invalid_game_state', 'The game is paused.');
       }
 
@@ -401,10 +849,87 @@ export function createSessionRegistry(
       session.game.submitAction(seat, action, at);
     },
 
+    requestLeave(sessionId, userId) {
+      const session = requireSession(sessionId);
+      const seat = seatOf(session, userId);
+      const partner = session.players[otherSeat(seat)];
+
+      // Outside an active match there is nothing to protect, so asking is just leaving.
+      if (session.phase !== 'active') {
+        endSession(session, session.phase === 'finished' ? 'finished' : 'abandoned', 'left', userId);
+        return;
+      }
+
+      // Nobody there to ask. Giving up the forfeit they were about to win is entirely their right,
+      // and refusing would trap them in a match against somebody who has gone.
+      if (!isPresent(partner)) {
+        endSession(session, 'abandoned', 'left', userId);
+        return;
+      }
+
+      if (session.leaveRequest) {
+        throw new SessionError('invalid_action', 'Somebody has already asked.');
+      }
+
+      const expiresAt = now() + LEAVE_REQUEST_TTL_MS;
+      session.leaveRequest = {
+        byUserId: userId,
+        expiresAt,
+        timer: setTimeout(() => {
+          if (session.leaveRequest?.byUserId !== userId) return;
+          session.leaveRequest = null;
+          // Silence changes nothing. Anything else would make ignoring a request the way to lose a
+          // match you were winning to a message you never saw.
+          broadcast(session, EVENTS.lobby.leaveResolved, { outcome: 'expired' });
+        }, LEAVE_REQUEST_TTL_MS),
+      };
+
+      broadcast(session, EVENTS.lobby.leaveRequested);
+    },
+
+    respondToLeave(sessionId, userId, accept) {
+      const session = requireSession(sessionId);
+      seatOf(session, userId);
+
+      const request = session.leaveRequest;
+      if (!request) {
+        throw new SessionError('invalid_action', 'There is nothing to answer.');
+      }
+
+      // The asker answering their own request is a withdrawal, and the only answer they may give.
+      if (request.byUserId === userId) {
+        if (accept) {
+          // `invalid_action` rather than `not_authorized`: they are perfectly entitled to be here,
+          // they just cannot agree with themselves. The client reads `not_authorized` on a session
+          // frame as "this game is not yours" and closes the screen, which this is nowhere near.
+          throw new SessionError('invalid_action', 'They have to agree, not you.');
+        }
+        dropLeaveRequest(session);
+        broadcast(session, EVENTS.lobby.leaveResolved, { outcome: 'withdrawn' });
+        return;
+      }
+
+      if (!accept) {
+        dropLeaveRequest(session);
+        broadcast(session, EVENTS.lobby.leaveResolved, { outcome: 'declined' });
+        return;
+      }
+
+      // Agreed, so nobody lost: the session closes with no result and counts towards nothing (P-8).
+      endSession(session, 'abandoned', 'left', request.byUserId);
+    },
+
     leave(sessionId, userId) {
       const session = requireSession(sessionId);
       // Authorization first: knowing an id is not permission to end somebody else's game.
-      seatOf(session, userId);
+      const seat = seatOf(session, userId);
+
+      // A match in progress is the one thing you cannot simply walk out of, because the alternative
+      // to walking out is a forfeit — and a free exit needing nobody's agreement is the exit
+      // everybody would take. `requestLeave` is the way out while they are still here.
+      if (session.phase === 'active' && isPresent(session.players[otherSeat(seat)])) {
+        throw new SessionError('invalid_action', 'Ask them if you can stop first.');
+      }
 
       // Deliberately not a disconnect. Someone who walks away on purpose should not leave their
       // partner watching a two-minute countdown for a person who is not coming back.
@@ -433,67 +958,16 @@ export function createSessionRegistry(
       const session = byId.get(sessionId);
       if (!session) return;
 
-      if (online) {
-        if (session.awaiting === userId) {
-          // They made it back inside the window.
-          if (session.reconnectTimer) clearTimeout(session.reconnectTimer);
-          session.reconnectTimer = undefined;
-          session.reconnectDeadline = null;
-          session.awaiting = null;
-          // Restarted rather than resumed mid-flight: the round they missed is thrown away and a
-          // fresh one is armed, so neither of them is scored on a moment nobody could see.
-          if (session.pauseOnDisconnect) session.game?.resume();
-          broadcast(session, EVENTS.presence.playerConnected);
-          broadcast(session, EVENTS.presence.playerReconnected);
-          // A resumed countdown restarts from the top rather than continuing from wherever it was,
-          // so the person who just came back gets the same 3-2-1 as the one who waited.
-          maybeStartCountdown(session);
-          return;
-        }
-
-        broadcast(session, EVENTS.presence.playerConnected);
-        return;
-      }
-
-      // Nobody can be ready while they are gone. Clearing it stops a countdown from firing for a
-      // player who is not there to see it.
       const seat = session.players.findIndex((candidate) => candidate.userId === userId);
-      const player = seat === -1 ? undefined : session.players[seat];
-      if (player) player.ready = false;
-      abandonCountdown(session);
+      if (seat === -1) return;
 
-      if (session.phase === 'lobby' || session.phase === 'finished') {
-        // Nobody is left to hold it open for. Ending it frees the couple to invite each other to
-        // something else — a session kept alive for two people who have both closed the tab is a
-        // session that blocks every future invitation until the process restarts (ADR-009).
-        if (!session.players.some((candidate) => presence.isOnline(candidate.userId))) {
-          endSession(session, 'abandoned', 'abandoned');
-          return;
-        }
+      // Their last socket closed, so whatever their client last said about being on the page is now
+      // an assertion nobody is behind. Coming back online is not coming back to the game — the
+      // client re-joins if it really is still here, and that is the only thing that puts them at the
+      // table again. Presence itself is read from the socket registry, never from this flag.
+      if (!online) session.players[seat as PlayerIndex].onPage = false;
 
-        // Nothing is running, so there is nothing to hold open. The partner simply sees them go.
-        broadcast(session, EVENTS.presence.playerDisconnected);
-        return;
-      }
-
-      // The clock stops before anyone is told, so the frame announcing the window already shows a
-      // paused game rather than one still counting down towards a player who cannot see it.
-      if (session.pauseOnDisconnect) session.game?.pause();
-
-      session.awaiting = userId;
-      session.reconnectDeadline = now() + RECONNECT_WINDOW_MS;
-      broadcast(session, EVENTS.presence.reconnectWindowStarted);
-
-      session.reconnectTimer = setTimeout(() => {
-        session.reconnectTimer = undefined;
-        if (session.awaiting !== userId) return;
-
-        session.reconnectDeadline = null;
-        broadcast(session, EVENTS.presence.reconnectWindowExpired);
-        // P-8: an abandoned session counts towards nothing. Slice 8 writes the row; there is
-        // nothing to record yet, and nobody is awarded a win for a partner's bad wifi.
-        endSession(session, 'abandoned', 'abandoned');
-      }, RECONNECT_WINDOW_MS);
+      syncPresence(session, seat as PlayerIndex);
     },
 
     closeAll() {

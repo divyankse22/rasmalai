@@ -1,11 +1,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   EVENTS,
   REACTIONS,
   type MatchResultView,
+  type ProtocolError,
   type Reaction,
   type ReactionPayload,
   type SessionEndedPayload,
@@ -17,6 +18,7 @@ import { Card } from '@/design-system/Card';
 import { PersonName } from '@/design-system/PersonName';
 import { gameGlyph } from '@/features/dashboard/gameGlyphs';
 import { avatarGlyph } from '@/features/onboarding/avatars';
+import { formatClock, useCountdown } from '@/features/play/useCountdown';
 import { GameMount } from '@/games/GameMount';
 import { useRealtime, useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
@@ -53,6 +55,8 @@ const SESSION_EVENTS = new Set<string>([
   EVENTS.game.roundEnded,
   EVENTS.game.finished,
   EVENTS.results.matchResult,
+  EVENTS.lobby.leaveRequested,
+  EVENTS.lobby.leaveResolved,
 ]);
 
 function PlayerChip({ player, label }: { player: SessionPlayer; label: string }) {
@@ -74,33 +78,6 @@ function PlayerChip({ player, label }: { player: SessionPlayer; label: string })
   );
 }
 
-/**
- * Counts down to a server-set deadline by subtracting the local clock, never by keeping its own.
- *
- * The clock is held in state and only ever read from a callback, because reading `Date.now()`
- * during render is impure and React's rules forbid it. The zero-delay timer re-syncs the moment a
- * new deadline arrives — without it, a countdown starting after a long wait in the lobby would
- * briefly render against a clock from when the screen was opened.
- */
-function useSecondsUntil(deadline: number | null): number | null {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (deadline === null) return;
-
-    const sync = () => setNow(Date.now());
-    const immediate = setTimeout(sync, 0);
-    const timer = setInterval(sync, 200);
-
-    return () => {
-      clearTimeout(immediate);
-      clearInterval(timer);
-    };
-  }, [deadline]);
-
-  return deadline === null ? null : Math.max(0, Math.ceil((deadline - now) / 1000));
-}
-
 /** How a finished match is announced. P-3: only a competitive game is a win over somebody. */
 function ResultBanner({ result, partner }: { result: MatchResultView; partner: SessionPlayer }) {
   if (!result.competitive) {
@@ -110,6 +87,34 @@ function ResultBanner({ result, partner }: { result: MatchResultView; partner: S
           💞
         </span>
         <p className="font-display text-xl font-bold text-ink">Played together</p>
+      </>
+    );
+  }
+
+  // Won because they never came back, which is not a scoreline worth printing. "You win 1–0" tells
+  // nobody anything true about a match that was never finished.
+  if (result.byForfeit) {
+    return (
+      <>
+        <span className="text-4xl" aria-hidden="true">
+          {result.outcome === 'won' ? '🏆' : '💔'}
+        </span>
+        <p className="font-display text-xl font-bold text-ink">
+          {result.outcome === 'won' ? 'They did not come back' : 'You did not make it back'}
+        </p>
+        <p className="text-sm text-muted">
+          {result.outcome === 'won' ? (
+            <>
+              This one goes to you.{' '}
+              <PersonName name={partner.nickname} gender={partner.gender} /> was away too long.
+            </>
+          ) : (
+            <>
+              <PersonName name={partner.nickname} gender={partner.gender} /> waited two minutes, so
+              this one is theirs.
+            </>
+          )}
+        </p>
       </>
     );
   }
@@ -147,8 +152,8 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
 
-  const countdown = useSecondsUntil(session?.startsAt ?? null);
-  const reconnectSeconds = useSecondsUntil(session?.reconnectDeadline ?? null);
+  const countdown = useCountdown(session?.startsAt ?? null);
+  const moveSeconds = useCountdown(session?.turnDeadline ?? null);
 
   /** Asks the server where things stand. The answer is the only version that counts. */
   const join = useCallback(() => {
@@ -158,6 +163,47 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (status === 'connected') join();
   }, [status, join]);
+
+  /**
+   * Leaving this page is leaving the game.
+   *
+   * The socket outlives the page deliberately (P-7), so without this frame, routing to the
+   * dashboard mid-match would be completely invisible to the server while closing the tab was not —
+   * two identical walkouts, treated as if only one of them happened.
+   *
+   * `sendRef` keeps the unmount cleanup out of the dependency list: a `send` identity change must
+   * not fire an "I have left" for a page that is still open.
+   */
+  const sendRef = useRef(send);
+  useEffect(() => {
+    sendRef.current = send;
+  }, [send]);
+
+  //
+  // Not sent once this session is over: there is nothing left to leave, and the frame would come
+  // back as a `session_not_found` for a game the server has already forgotten — landing on whatever
+  // screen is open by then, which after a rematch is a brand new game that is perfectly fine.
+  const endedRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      if (!endedRef.current) sendRef.current(EVENTS.lobby.away, { sessionId });
+    };
+  }, [sessionId]);
+
+  /**
+   * The last moment we can catch somebody before they forfeit.
+   *
+   * Only during an active match — there is nothing at stake in a lobby, and a browser prompt on
+   * every exit would be noise. The wording belongs to the browser; sites cannot set it.
+   */
+  const matchRunning = session?.phase === 'active';
+  useEffect(() => {
+    if (!matchRunning) return;
+
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [matchRunning]);
 
   // A socket that dropped missed every frame in between, so the whole view is asked for again
   // rather than patched up from what it was showing. This is also the reconnect path for a game in
@@ -172,10 +218,29 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
     [send, sessionId],
   );
 
+  /**
+   * Two ways out, and which one you get depends on whether a match is running.
+   *
+   * Outside one there is nothing to protect, so leaving closes it for both. Inside one it has to be
+   * asked for: the alternative to a free exit is a forfeit, and a free exit needing nobody's
+   * agreement is the exit everybody would take.
+   */
   const leave = useCallback(() => {
+    if (session?.phase === 'active') {
+      send(EVENTS.lobby.leaveRequest, { sessionId });
+      setConfirmingLeave(false);
+      return;
+    }
+
     send(EVENTS.lobby.leave, { sessionId });
     router.push('/dashboard');
-  }, [send, sessionId, router]);
+  }, [send, sessionId, router, session?.phase]);
+
+  /** This game is over, for whatever reason. Says so, and stops talking to the server about it. */
+  const finish = useCallback((message: string) => {
+    endedRef.current = true;
+    setEnded(message);
+  }, []);
 
   useRealtimeEvent(
     useCallback(
@@ -191,14 +256,14 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           const { session: next, reason, byUserId } = envelope.payload as SessionEndedPayload;
           if (next && next.id !== sessionId) return;
 
-          setEnded(
+          finish(
             reason === 'left'
               ? byUserId === next?.you.userId
                 ? 'You left the game.'
                 : `${next?.partner.nickname ?? 'They'} left the game.`
               : reason === 'server_stopped'
                 ? 'Rasmalai restarted, so the game stopped. Nothing was lost but this round.'
-                : 'Someone could not make it back in time. The game was called off.',
+                : 'Neither of you made it back in time, so this one goes to nobody.',
           );
           return;
         }
@@ -219,13 +284,25 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         }
 
         if (envelope.type === EVENTS.error) {
-          const { code } = envelope.payload as { code?: string };
-          if (code === 'session_not_found' || code === 'not_authorized') {
-            setEnded('That game is no longer running.');
+          const error = envelope.payload as ProtocolError;
+
+          // One socket carries the whole app, so an error naming a different game is not this
+          // screen's business — and that is the common case, because the frame a page sends on its
+          // way out routinely lands after the server has forgotten the session it named.
+          if (error.sessionId !== undefined && error.sessionId !== sessionId) return;
+
+          if (error.code === 'session_not_found') {
+            finish('That game is no longer running.');
+            return;
           }
+
+          // Deliberately its own message rather than sharing the one above: `not_authorized` also
+          // comes back from perfectly ordinary refusals mid-match, and blanking a live game for one
+          // of those would be inventing an ending.
+          if (error.code === 'not_authorized') finish('That game is not yours.');
         }
       },
-      [sessionId, session?.you.userId],
+      [sessionId, session?.you.userId, finish],
     ),
   );
 
@@ -251,8 +328,11 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
     );
   }
 
-  const waitingForPartner = session.reconnectDeadline !== null;
+  const waitingForPartner = session.partner.awayUntil !== null;
   const playing = session.phase === 'active' || session.phase === 'finished';
+  const yourMove = session.turnUserId !== null && session.turnUserId === session.you.userId;
+  // Under thirty seconds it stops being a detail and starts being the thing on screen.
+  const movePressing = moveSeconds !== null && moveSeconds <= 30;
   const toggleReady = () =>
     send(session.you.ready ? EVENTS.lobby.playerUnready : EVENTS.lobby.playerReady, { sessionId });
 
@@ -276,21 +356,7 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         </Card>
       )}
 
-      {waitingForPartner ? (
-        <Card className="flex flex-col items-center gap-2 text-center">
-          <span className="text-2xl" aria-hidden="true">
-            📡
-          </span>
-          <p className="font-display font-semibold text-ink">
-            Waiting for{' '}
-            <PersonName name={session.partner.nickname} gender={session.partner.gender} /> to come
-            back
-          </p>
-          <p className="text-sm text-muted" role="timer">
-            {reconnectSeconds ?? 0}s left. The round restarts when they make it.
-          </p>
-        </Card>
-      ) : session.phase === 'countdown' ? (
+      {waitingForPartner ? null : session.phase === 'countdown' ? (
         <Card className="flex flex-col items-center gap-2 py-8 text-center">
           <span
             className="font-display text-6xl font-bold text-berry tabular-nums"
@@ -335,6 +401,31 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         </Card>
       )}
 
+      {/* Whose move it is, and how long they have left of it. Only for a game that has turns at
+          all — a reaction test is waiting on a stimulus, not on a person, and says so itself. */}
+      {session.turnDeadline !== null && moveSeconds !== null && (
+        <div
+          className={`flex items-center justify-center gap-2 rounded-pill px-4 py-2 text-sm transition-colors duration-soft ${
+            movePressing ? 'bg-blush text-ink' : 'bg-cream text-muted'
+          }`}
+        >
+          <span aria-hidden="true">{yourMove ? '👉' : '⏳'}</span>
+          <span>
+            {yourMove ? (
+              'Your move'
+            ) : (
+              <>
+                <PersonName name={session.partner.nickname} gender={session.partner.gender} /> is
+                thinking
+              </>
+            )}
+          </span>
+          <span className="font-display font-bold tabular-nums" role="timer" aria-live="off">
+            {formatClock(moveSeconds)}
+          </span>
+        </div>
+      )}
+
       {/* The game itself. It stays up on the results screen so the round-by-round is still there to
           argue about. */}
       {playing && session.game && (
@@ -361,26 +452,45 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           ))}
         </div>
 
-        {/* Leaving asks first, because it ends the game for both of them — unlike a closed tab or
-            a dropped connection, which is a disconnect and gets the 120-second window instead. */}
+        {/* Mid-match this asks them; everywhere else it just closes. Either way it ends the game
+            for both — unlike a closed tab or a dropped connection, which is a walkout and gets the
+            120-second clock and a forfeit at the end of it. */}
         {confirmingLeave ? (
           <Card className="flex flex-col items-center gap-3 text-center">
             <p className="text-sm text-ink">
-              Leave the game? It ends for{' '}
-              <PersonName name={session.partner.nickname} gender={session.partner.gender} /> too.
+              {matchRunning ? (
+                <>
+                  Ask{' '}
+                  <PersonName
+                    name={session.partner.nickname}
+                    gender={session.partner.gender}
+                  />{' '}
+                  to stop here? Nobody wins or loses if they agree.
+                </>
+              ) : (
+                <>
+                  Leave? It ends for{' '}
+                  <PersonName name={session.partner.nickname} gender={session.partner.gender} />{' '}
+                  too.
+                </>
+              )}
             </p>
             <div className="flex w-full gap-2">
               <Button variant="soft" className="flex-1" onClick={() => setConfirmingLeave(false)}>
                 Stay
               </Button>
               <Button className="flex-1" onClick={leave}>
-                Leave
+                {matchRunning ? 'Ask them' : 'Leave'}
               </Button>
             </div>
           </Card>
         ) : (
-          <Button variant="ghost" onClick={() => setConfirmingLeave(true)}>
-            Leave
+          <Button
+            variant="ghost"
+            disabled={session.leaveRequest !== null}
+            onClick={() => setConfirmingLeave(true)}
+          >
+            {session.leaveRequest !== null ? 'Asked…' : matchRunning ? 'Ask to stop' : 'Leave'}
           </Button>
         )}
       </div>

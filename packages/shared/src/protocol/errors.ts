@@ -19,6 +19,8 @@ export const ERROR_CODES = [
   'rate_limited',
   'invalid_payload',
   'internal_error',
+  /** They are not signed in, so there is nobody to play against right now. */
+  'partner_offline',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -26,6 +28,15 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 export interface ProtocolError {
   code: ErrorCode;
   message: string;
+  /**
+   * Which session this is about, when it is about one at all.
+   *
+   * One socket serves the whole app, so without this a client cannot tell an error about the game
+   * it is showing from an error about a game it has already left — and the second kind arrives
+   * routinely, because leaving a session sends one last frame about it. Stamped by the server from
+   * the frame it was answering; a client must ignore any error naming a session that is not theirs.
+   */
+  sessionId?: string;
 }
 
 /** Safe fallback for anything unexpected, so an internal failure never becomes a leak. */

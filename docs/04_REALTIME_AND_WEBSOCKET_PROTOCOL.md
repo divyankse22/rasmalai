@@ -91,12 +91,33 @@ Competitive games should use server timestamps when timing matters.
 
 Do not compare browser clocks for fairness.
 
-## 6. Reconnection
+## 6. Reconnection and the move clock
 
-Default active-session reconnection window:
+Default active-session window:
 120 seconds.
 
 Behavior is game-specific.
+
+There is one clock, and two ways onto it:
+
+- **Being away** — no socket, or a socket that is not on the game's page. Each player has their own
+  deadline, so both of them can be on it at once.
+- **Being on the move** — the seat the game names through `turnOf`, during an active match. It
+  restarts when the turn changes, and it does not run while anybody is away, because an action is
+  refused in that state anyway.
+
+A connected player who never moves and a player who walked out are the same thing from the other
+side of the board, and are waited on the same way.
+
+When the clock runs out, whoever is at fault loses:
+
+- one at fault → the other player takes it (1–0, flagged as a forfeit rather than a scoreline);
+  a game with no winner to award simply stops
+- both at fault → nobody won anything; the session closes and counts towards nothing (P-8)
+
+Both away resolves at the **later** of the two deadlines, so somebody who still has time on their
+own clock can come back and claim it. The same window runs outside an active match, where nothing
+is at stake but a session both of them have left must still stop holding the couple's one slot.
 
 Tournament default:
 - disconnect
@@ -104,7 +125,8 @@ Tournament default:
 - if player reconnects, game-specific restoration may occur
 - if not, restart the affected tournament game
 
-The game contract must explicitly declare its reconnection policy.
+The game contract must explicitly declare its reconnection policy, and must name the seat it is
+waiting on so the platform can run the move clock without knowing anything about the game.
 
 ## 7. Invitation lifecycle
 

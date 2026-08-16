@@ -28,6 +28,7 @@ const reactionFrame = sessionFrame.extend({ reaction: z.enum(REACTIONS) });
 // `action` is deliberately unvalidated here. Its shape belongs to the game module, which validates
 // it before it touches any state; a platform that also had an opinion would need editing per game.
 const actionFrame = sessionFrame.extend({ action: z.unknown() });
+const leaveRespondFrame = sessionFrame.extend({ accept: z.boolean() });
 
 /**
  * Ceilings on the frames a person can send as fast as they can tap
@@ -204,6 +205,21 @@ export function attachWebSocketServer(
       // sample yet is no compensation at all.
       probe(socket, state);
 
+      // If they are in a game, they are told where it stands before they ask.
+      //
+      // Somebody who refreshed on their dashboard mid-match has two minutes to get back and nothing
+      // that would tell them so: they are not on the game's page, so nothing they load fetches it,
+      // and the server only broadcasts on transitions — of which their reconnection is not one,
+      // because they are still not at the table. This frame is the only thing that reaches them,
+      // and losing a match without ever being told it was happening is the outcome it exists to
+      // prevent.
+      const sessionId = sessions?.sessionIdForUser(user.userId);
+      if (sessionId !== undefined && sessionId !== null) {
+        send(socket, EVENTS.lobby.joined, {
+          session: sessions!.viewFor(sessionId, user.userId),
+        });
+      }
+
       if (!wasOnline) announcePresence(user.userId, true);
       return;
     }
@@ -225,9 +241,12 @@ export function attachWebSocketServer(
     const isSessionFrame: boolean = (
       [
         EVENTS.lobby.join,
+        EVENTS.lobby.away,
         EVENTS.lobby.playerReady,
         EVENTS.lobby.playerUnready,
         EVENTS.lobby.leave,
+        EVENTS.lobby.leaveRequest,
+        EVENTS.lobby.leaveRespond,
         EVENTS.game.actionRequest,
         EVENTS.reaction.sent,
       ] as string[]
@@ -250,12 +269,38 @@ export function attachWebSocketServer(
           if (!frame.success) return invalidPayload(socket, requestId);
           // The registry decides whether this person belongs in that session; knowing the id
           // grants nothing (docs/07: never trust a socket because it knows a session id).
+          //
+          // Joining also *marks them present*, which is what closes a reconnect window. Being on
+          // the page is the half of presence a socket cannot observe on its own.
           send(
             socket,
             EVENTS.lobby.joined,
-            { session: sessions!.viewFor(frame.data.sessionId, userId) },
+            { session: sessions!.join(frame.data.sessionId, userId) },
             requestId,
           );
+          return;
+        }
+
+        case EVENTS.lobby.away: {
+          const frame = sessionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+          // They navigated somewhere else in the app. The socket stays open — P-7 wants it open —
+          // but they are no longer at the table, and mid-match that starts the clock.
+          sessions!.markAway(frame.data.sessionId, userId);
+          return;
+        }
+
+        case EVENTS.lobby.leaveRequest: {
+          const frame = sessionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+          sessions!.requestLeave(frame.data.sessionId, userId);
+          return;
+        }
+
+        case EVENTS.lobby.leaveRespond: {
+          const frame = leaveRespondFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+          sessions!.respondToLeave(frame.data.sessionId, userId, frame.data.accept);
           return;
         }
 
@@ -329,9 +374,24 @@ export function attachWebSocketServer(
       }
     } catch (error) {
       if (error instanceof SessionError) {
-        // A bad frame is an expected event, not grounds for dropping a connection someone is
-        // mid-game on.
-        send(socket, EVENTS.error, { code: error.code, message: error.message }, requestId);
+        // Stamped with the session it was about, from the frame we were answering.
+        //
+        // One socket serves the whole app, so an error with no session on it is an error the client
+        // cannot place: leaving a game sends one last frame about it, that frame loses its race with
+        // the teardown, and the bare `session_not_found` that comes back lands on whatever screen is
+        // open by then — routinely a *different*, perfectly healthy game. Naming the session is what
+        // lets the client throw it away.
+        const frame = sessionFrame.safeParse(payload);
+        send(
+          socket,
+          EVENTS.error,
+          {
+            code: error.code,
+            message: error.message,
+            ...(frame.success ? { sessionId: frame.data.sessionId } : {}),
+          },
+          requestId,
+        );
         return;
       }
       throw error;
@@ -352,6 +412,11 @@ export function attachWebSocketServer(
    *
    * Fired only on the transitions that matter — first socket in, last socket out — so opening a
    * second tab never reads as a reconnection.
+   *
+   * The partner's frame is `partner.online` / `partner.offline`, which is deliberately not the
+   * `player.*` family the session uses. This one reaches somebody with no game running at all, and
+   * carries a person rather than a session view; sharing a name meant every listener had to guess
+   * which kind it was holding, and each of them guessed by dropping the frame on the floor.
    */
   function announcePresence(userId: string, online: boolean): void {
     sessions?.handlePresence(userId, online);
@@ -359,7 +424,7 @@ export function attachWebSocketServer(
     void partnerOf?.(userId)
       .then((partnerId) => {
         if (!partnerId) return;
-        const type = online ? EVENTS.presence.playerConnected : EVENTS.presence.playerDisconnected;
+        const type = online ? EVENTS.presence.partnerOnline : EVENTS.presence.partnerOffline;
         for (const partnerSocket of registry.socketsFor(partnerId)) {
           if (partnerSocket.readyState === partnerSocket.OPEN) {
             partnerSocket.send(serializeEnvelope(createEnvelope(type, { userId, online })));

@@ -27,30 +27,29 @@ const notifier = createNotifier(registry);
 // copy, so the two can never disagree about who is here.
 const sessions = createSessionRegistry(notifier, registry);
 const invitations = createInvitationsRepository(pool);
+const pairing = createPairingRepository(pool);
 
 const app = createApp({
   appOrigin: env.APP_ORIGIN,
   verifier,
   users: createUsersRepository(pool),
-  pairing: createPairingRepository(pool),
+  pairing,
   dashboard: createDashboardRepository(pool),
   invitations,
   sessions,
   realtime: notifier,
+  // The same registry the sockets and the sessions read, so nothing can disagree about who is here.
+  presence: registry,
 });
 const server = createServer(app);
 
-/** The one person allowed to know whether you are online. */
-async function partnerOf(userId: string): Promise<string | null> {
-  const { rows } = await pool.query<{ partner_id: string }>(
-    `select case when user_a_id = $1 then user_b_id else user_a_id end as partner_id
-       from public.couples where user_a_id = $1 or user_b_id = $1`,
-    [userId],
-  );
-  return rows[0]?.partner_id ?? null;
-}
-
-const realtime = attachWebSocketServer(server, { verifier, registry, sessions, partnerOf });
+const realtime = attachWebSocketServer(server, {
+  verifier,
+  registry,
+  sessions,
+  // The one person allowed to know whether you are online.
+  partnerOf: async (userId) => (await pairing.findPartner(userId))?.id ?? null,
+});
 const sweeper = startInvitationSweeper(invitations, notifier);
 
 server.listen(env.PORT, () => {

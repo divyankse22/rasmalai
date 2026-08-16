@@ -32,7 +32,7 @@ function tinyRules(overrides: Partial<AnyGameRules> = {}): AnyGameRules {
       orientation: 'any',
       inputs: ['tap'],
     },
-    reconnectPolicy: { windowMs: 120_000, pauseOnDisconnect: true, onExpire: 'abandon' },
+    reconnectPolicy: { windowMs: 120_000, pauseOnDisconnect: true, onExpire: 'forfeit' },
 
     createMatch: (now) => ({ liveAt: now + 1_000, live: false, moves: 0, done: false }) as TinyState,
 
@@ -62,6 +62,8 @@ function tinyRules(overrides: Partial<AnyGameRules> = {}): AnyGameRules {
       };
     },
 
+    // Waiting on the clock, never on a person, so nobody is ever on a move clock here.
+    turnOf: () => null,
     pause: (state) => state,
     resume: (state) => ({ state, events: [] }),
     getView: (state) => state,

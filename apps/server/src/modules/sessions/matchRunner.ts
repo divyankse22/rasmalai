@@ -32,6 +32,14 @@ export interface RunningMatch {
   readonly complete: boolean;
   /** The game's state as one seat is allowed to see it. */
   viewFor(player: PlayerIndex): unknown;
+  /**
+   * The seat the game is waiting on, or null when it is waiting on time instead.
+   *
+   * The session runs the move clock from this. It is read rather than pushed because the answer
+   * changes for reasons the runner cannot see — a move, a tick, a game deciding it is over — and
+   * asking is the only way that cannot go stale.
+   */
+  turnOf(): PlayerIndex | null;
   /** Throws `SessionError` if the game refuses the action. */
   submitAction(player: PlayerIndex, action: unknown, at: ActionTiming): void;
   /** A player is missing: stop the clock and throw away whatever was in flight. */
@@ -134,6 +142,12 @@ export function startMatch({
 
     viewFor(player) {
       return rules.getView(state, player);
+    },
+
+    turnOf() {
+      // A finished match is waiting on nobody, whatever the rules still hold about whose turn it
+      // technically was. Nothing should be under a clock while its result is on screen.
+      return completed ? null : rules.turnOf(state);
     },
 
     submitAction(player, action, at) {

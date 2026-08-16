@@ -12,7 +12,9 @@ export class SessionError extends Error {
       | 'session_not_found'
       | 'not_authorized'
       | 'invalid_game_state'
-      | 'invalid_action',
+      | 'invalid_action'
+      // Not a session refusal so much as a refusal to open one: there is nobody there to play.
+      | 'partner_offline',
     message: string,
   ) {
     super(message);

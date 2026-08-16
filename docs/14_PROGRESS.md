@@ -6,8 +6,7 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: end of slice 7, plus the onboarding rework described under "Onboarding has two
-branches" below.
+Last updated: after the session-clock and partner-presence fixes that follow slice 7b.
 
 ---
 
@@ -22,16 +21,60 @@ branches" below.
 | 5 | Couple dashboard, catalogue, statistics read path | **done, verified** |
 | 6 | Realtime: invitations, TTL, lobby, ready, countdown, reactions | **done, verified** |
 | 7 | Reaction Speed (first game, end to end) | **done, verified** |
-| 7b | Four in a Row | next |
-| 8 | Results, statistics, retention job | not started |
+| 7b | Four in a Row | **done, verified** |
+| 7c | Session clock rework, partner presence, offline gate | **done**, automated gate green; two-account browser run outstanding |
+| 8 | Results, statistics, retention job | next |
 | 9 | Tournaments | not started |
 | 10+ | Remaining games, mobile polish, deployment | not started |
 
-Gate at the time of writing: **285 tests passing**, typecheck, lint and both builds green
-(`npm run verify`), plus **49 realtime checks** against real sockets and real Postgres, and a full
-match played in a browser against a live partner.
+Gate at the time of writing: **360 tests passing**, typecheck, lint and both builds green
+(`npm run verify`), plus **41 realtime checks** for Four in a Row against real sockets, real
+Postgres and two real Supabase accounts, and the board itself measured in a browser.
 
 ---
+
+## Slice 7c: one clock, and knowing whether they are there
+
+Three things, one area of the code.
+
+**A session could be destroyed by the first player to reach it.** A session is created the moment an
+invitation is accepted, and the two of them navigate to it separately — so there is always a window
+where one is on the page and the other is still on the games list. `left()` read "my partner is not
+present" as "we have both gone" and ended the session outright, which meant a refresh, a phone
+waking up, or React's development-mode double mount would end a game before the second player had
+loaded it. They arrived to `session_not_found` and the message **"That game is no longer running."**
+Every registry test had joined both players first, so the window had no coverage at all.
+
+**Errors were being blamed on the wrong game.** `ProtocolError` carried no session id and one socket
+serves the whole app, so a late `session_not_found` — routinely produced by the `lobby.away` a page
+sends on its way out — was applied to whatever screen happened to be open. After a rematch that is a
+brand new, perfectly healthy game. Errors now name their session and the client ignores the ones
+that are not its own. `respondToLeave`'s "they have to agree, not you" also stopped being
+`not_authorized`, which the client reads as *this game is not yours* and closes the screen over.
+
+**One clock replaces two half-rules.** Being away and being on the move are now the same 120 seconds
+with the same consequence: whoever is at fault when it runs out loses, and if both are at fault
+nobody won anything. Games name the seat they are waiting on through a new `turnOf` on the contract
+and decide nothing about what being late costs — that is a result, and results belong to the
+platform. This closes what was known limitation 17.
+
+The both-away case is the one that changed most. It used to end the session on the spot; it now runs
+the window for each of them and resolves at the **later** deadline, so whoever gets back is the last
+one in the room and takes it. That is also what makes the first bug above impossible rather than
+merely unlikely.
+
+**Presence moved to where it is useful.** The header used to report your own socket status, which
+told you something you could already see. It now shows your partner's face with a dot under it —
+socket-pushed on every transition, seeded by `GET /api/presence/partner` on load, with a 15-second
+backstop poll so a frame missed while a phone was asleep cannot leave it quietly wrong. Pressing
+Play re-asks before sending, and the server refuses outright with `partner_offline` if there is
+nobody there: an invitation to somebody signed out is five minutes of waiting for a sheet nobody
+will ever see, and it holds the couple's one slot the whole time.
+
+The couple-scoped presence frames were also renamed to `partner.online` / `partner.offline`. They
+had been sharing `player.connected` / `player.disconnected` with the session's own presence events
+while carrying a completely different payload, and every client listener "handled" them by reading
+a `session` field that was not there and dropping the frame.
 
 ## Onboarding has two branches
 
@@ -167,6 +210,37 @@ Slice 7 adds the game itself, and the seam it plugs into:
 - A lobby both players have walked away from now ends itself. Left alone it would sit in memory
   forever, and ADR-009 would refuse the couple every future invitation until the process restarted.
 
+Slice 7b adds the second game, and the whole point of it is what it did **not** touch:
+
+- **Not one line of the platform changed.** No new table, no new column, no new event, no edit to
+  the session registry, the match runner, the socket layer or the web app. Four in a Row is a folder
+  under `packages/games`, three lines of registration, and one `update` statement. Until it shipped,
+  "the platform is game-agnostic" was a claim with one data point (`docs/13` section 8).
+- The two games have **almost nothing in common**, which is what makes the pairing worth something.
+  Reaction Speed is timed, secret and restarts a round when somebody drops; Four in a Row is
+  turn-based, fully open, and must survive a disconnect with its board untouched.
+- **It asks the platform for no clock at all.** `nextTickAt` returns null, so the runner arms no
+  timer — asserted directly, with `vi.getTimerCount()` reading zero while a match is live. A game
+  that wants nothing from the clock costs nothing, and the timing machinery turns out to be optional
+  infrastructure rather than a second set of rules every game has to be fitted to.
+- **`pauseOnDisconnect: false`**, the other branch of the reconnect policy, used for the first time.
+  A timed game must stop its clock or the absent player loses rounds they never saw; a turn-based
+  board must do the opposite, because throwing away a position would punish bad wifi far harder than
+  any stopwatch could. The platform still refuses actions while a player is missing, so nobody can
+  be played around while they are gone, and one `lobby.joined` restores the whole board.
+- **Turn ownership** is this game's answer to "can a client fake an outcome". A drop names a
+  *column*, never a square: gravity is applied by the server, so a client that claimed a row would
+  be asserting an outcome rather than sending an intent (`docs/04` section 1).
+- **One board is one match**, and a rematch is a fresh board with a fresh coin-flip for who starts.
+  Best of three with alternating starts would buy away Connect Four's first-move advantage, at the
+  cost of tripling how long two people sit still. Chance was chosen over length; there is nothing in
+  this game to earn the advantage with, so chance is the fairest answer available.
+- **No turn clock.** The game is always waiting on a person, and a countdown that played a random
+  column for you is a harsh way to lose a board between two people who like each other. A stalled
+  game is escapable — Leave already ends it for both — and a disconnect still gets its 120 seconds.
+- A draw scores **0–0 rather than 1–1**. The margin between the scores is what feeds "most
+  competitive game", and a draw is as close as a match can get.
+
 ### Database
 
 `public.users` (including a required `gender`), `public.couples` and `public.pairing_requests`. Everything is keyed to
@@ -202,7 +276,11 @@ Slice 6 adds `public.invitations`, with the partial unique index
 inserting the new one share a transaction, so two devices sending different invitations at the same
 moment cannot both end up pending. `replaces_invitation_id` links a counter-proposal back to the
 invitation it answers, so the exchange reads as a conversation rather than two unrelated rows.
-`games.enabled` is now true for `reaction-speed` only.
+
+`0007_four_in_a_row.sql` is a single `update` flipping `games.enabled` for `four-in-a-row`. That is
+the entire database footprint of a second game: the catalogue row has existed since `0004`, and
+`enabled` means "somebody wrote this game", not "this couple has earned it" — everything is unlocked
+in V1. Two games, no new table, no new column, no new index.
 
 ### Web
 
@@ -230,6 +308,21 @@ measure the wrong thing. Your own reaction appears the instant you tap; your par
 until the round ends, so nobody plays against their partner's tap instead of the signal. When it is
 over the target is replaced by the round-by-round, because "you lost 2–3" is a fact and "you lost
 round four by eleven milliseconds" is an argument.
+
+Four in a Row needed **no web changes whatsoever** — not even a glyph, because `gameGlyphs.ts`
+already carried one for every seeded game. `GameMount` resolves the renderer by slug, the catalogue
+renders whatever the database says is enabled, and the board arrived on screen through both without
+either being edited.
+
+The board itself is seven column-shaped buttons rather than forty-two square ones: a thumb anywhere
+above a column drops there, which on a phone is the difference between a game and a game of
+precision. Tab and Enter work with no help because they are ordinary buttons, and arrow keys walk
+along the board the way anyone who has played this expects. Colour is never the only signal — the
+two players are a light disc and a dark one, a lightness difference rather than a hue one, so it
+survives colour blindness; the legend names both people against their colour; and every column says
+its own contents in words for a screen reader. Hovering or focusing a column shows a ghost disc in
+the square it would land in, derived from the authoritative board rather than from a second opinion
+about the rules.
 
 They share `app/(app)/layout.tsx`: a route group holding the header, the hamburger drawer, the
 socket and the invitation centre. The socket lives in the layout rather than on a page so it
@@ -277,6 +370,24 @@ looked like it was in charge. Renamed; `duration-quick` and `duration-soft` now 
 ## Verified, with evidence
 
 Not "it compiles" — these were actually run.
+
+- **Two real sockets against a real session registry** (`ws/server.test.ts`): the first player
+  joins, goes away and rejoins before the second arrives — no error, no ending, and the partner
+  still finds a game when they get there. This is the reported bug, end to end, across both layers
+  that had to be wrong together for it to happen. An error for a session that has ended comes back
+  carrying that session's id.
+- The move clock, against real Four in a Row rules: two minutes per move, restarted on every move,
+  not running while anybody is away, and never armed at all for Reaction Speed. A connected player
+  who simply stops moving loses the match.
+- Both players away: the session is held, resolves at the later of the two deadlines rather than the
+  first, goes to whoever comes back, and goes to nobody when neither does.
+- A session neither of them ever opens cleans itself up rather than holding the couple's slot for
+  the life of the process.
+- `GET /api/presence/partner` is 401 without a token, 200 with `partner: null` for somebody
+  unpaired, and derives the couple from the token's membership so there is no way to ask about
+  anybody else.
+- `POST /api/invitations` refuses with `partner_offline` and writes nothing when the partner has no
+  socket open.
 
 - Docker image builds, runs as non-root (`uid=1000`), reports `healthy`, logs JSON in production,
   and exits 0 on SIGTERM in 0.2s.
@@ -375,6 +486,32 @@ Not "it compiles" — these were actually run.
   - leaving ends it for both, **says who did it**, and frees the couple to invite again immediately;
   - **no `matches` row was written** — that is slice 8, and the boundary is asserted rather than
     assumed.
+- **41 realtime checks for Four in a Row**, against real sockets, real Postgres and two throwaway
+  Supabase accounts created, paired and deleted by the run itself:
+  - the catalogue offers exactly two playable games, and nothing else pretends to be;
+  - an invitation to the new game reaches the partner over the socket, accepting opens one session,
+    and the board arrives **with** the `lobby.started` frame rather than after it;
+  - exactly one of them has the first move, and both are told the same story about who it was;
+  - **a move out of turn is refused and nothing lands on the board**; so is a column that is not on
+    the board;
+  - gravity is the server's — the disc landed on the floor, the next one stacked on it, and the
+    partner saw the same disc as theirs;
+  - **a disconnect mid-board changed nothing**: the window opened, the two discs stayed exactly
+    where they were, the absent player could not be played around, and one frame restored the whole
+    board for the player who came back;
+  - four in a row ended it, the winning line was named and both of them got the same one,
+    `game.finished` and `match.result` both fired, and **the result mirrors** — won/lost and 1–0/0–1
+    swap when the other one looks;
+  - the finished board stayed on screen, both players were unready, one rematch was not enough and
+    two was, and the new board came up clean with the old result cleared;
+  - leaving ended it for both and said who did it, freeing the couple to invite again immediately;
+  - **no `matches` row was written** — the slice 8 boundary, asserted rather than assumed, for the
+    second game as well as the first.
+- The board **measured in a browser**, not eyeballed: seven column targets of 55×323px on a phone
+  viewport, 47px discs, `touch-action: none` and `user-select: none`, no horizontal scroll, and the
+  winning line lit up by a ring rather than a shade. A tap emitted exactly one intent —
+  `{"type":"drop","column":4}`, a column and nothing else — while the same tap on a decided board
+  emitted nothing at all, because every column on it is disabled.
 - A full five-round match played in a browser against a live partner on a real socket: the lobby,
   the 3-2-1, the signal, real pointer taps registering as reactions in the 200–1700ms range, the
   round-by-round recap, the results card, a rematch starting a clean match, and the leave
@@ -406,16 +543,18 @@ Not "it compiles" — these were actually run.
 6. **Nothing writes the statistics tables yet.** Slice 5 built and proved the read path; the
    formulas are fixed in the comments of `0004_dashboard.sql` so slice 8 has nothing left to
    invent. Every dashboard number is therefore honestly zero until then.
-7. **Reaction Speed is the only playable game.** Four in a Row is next, and is the real test of the
-   contract: turn ownership, illegal move rejection, full-state restore, and a genuinely different
-   renderer, with zero changes to the platform. Until it ships, "the platform is game-agnostic" is a
-   claim with one data point.
+7. **Two of the seventeen games exist.** Reaction Speed and Four in a Row, which between them cover
+   both shapes the contract was designed for — timed and turn-based, secret and open, clock-driven
+   and player-driven. The remaining fifteen are slice 10+. Nothing about the two that exist suggests
+   a third needs a platform change, but that is now an expectation rather than a hope.
 8. **The reconnect window expiring was verified with fake timers, not in a live browser.** The unit
    tests cover the transition — window expires, both told, session abandoned and forgotten, couple
    free to start again — and the end-to-end run covers the pause and the recovery inside the window,
    but waiting out a real 120 seconds was not done by hand.
 9. **Counter-proposals have no UI yet.** The server, the protocol and the transaction are done and
-   verified; the picker waits until a second game ships and there is something to counter with.
+   verified, and now that a second game exists there is finally something to counter *with* — the
+   reason the picker was deferred no longer holds. It is a small piece of the invitation sheet:
+   decline, pick another game, send. Worth doing whenever the games list is next touched.
 10. **Score units are not modelled.** A per-game best score renders as a bare number, which is right
    for points and wrong for a duration. The game module that first needs it should declare its own
    formatter rather than the platform guessing.
@@ -443,6 +582,31 @@ Not "it compiles" — these were actually run.
    questions; `requestByCode` then refuses with `needs_couple_details` and the pairing panel asks
    for them inline. Reaching that state in a browser needs four accounts and two rejections, so it
    has route- and schema-level coverage only.
+16. **Four in a Row's first move is decided by chance, every single match.** Connect Four rewards
+   moving first, and a rematch re-flips rather than alternating, so over a short evening one of them
+   can genuinely get the advantage more often. Accepted for V1: the alternative is best of three,
+   which triples how long a match takes. If it ever grates, the fix is rounds *inside* the game
+   module — alternating starts across three boards — and nothing outside that folder has to change.
+17. **Resolved in 7c: turn-based games now have a turn clock.** Two minutes per move, the same
+   clock and the same consequence as walking out, on the reasoning that from the other side of the
+   board the two are indistinguishable. Nothing is ever played on your behalf — the match is
+   awarded, not continued. What remains unproved by hand is the *timing*: the expiry is covered by
+   unit test with fake timers, and nobody has sat in front of a real board for two real minutes.
+18. **Slice 7c has not been through a two-account browser run.** Every path through the new clocks
+   — one away, both away, staggered deadlines, a connected player sitting on their move — is covered
+   deterministically with fake timers, and the reported bug is covered end to end over two real
+   sockets against a real registry. What has *not* happened is the thing the earlier slices all had:
+   two Google accounts in two browser profiles, playing it. The bottom sheet's new both-away state,
+   the move clock on screen, and the partner dot changing colour have been read, not watched.
+19. **The partner dot cannot distinguish "offline" from "signed in on a phone that is asleep".**
+   Presence is "at least one socket", so a backgrounded tab that has not yet been reaped by the
+   20-second heartbeat still reads as online for up to that long. Pressing Play in that window
+   creates an invitation nobody answers, which is exactly the outcome the gate exists to prevent —
+   just narrowed from five minutes to twenty seconds rather than removed.
+20. **The drawn board and the full column were proved by unit test, not over a socket.** Both are
+   covered exactly and deterministically in `four-in-a-row/server.test.ts`, including a real
+   forty-two-disc draw found by playing the rules; reaching either through two live sockets means
+   scripting forty-odd moves for a path the rules already decide on their own.
 
 ---
 

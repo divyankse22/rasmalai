@@ -14,6 +14,7 @@ import {
   type PairingRepository,
   type PairingRequestSummary,
   type PairingState,
+  type PartnerProfile,
   type RespondResult,
 } from '../modules/pairing/pairingRepository';
 import type { OnboardingInput } from '../modules/users/user.schema';
@@ -31,7 +32,11 @@ import type {
   InvitationsRepository,
   RespondedInvitation,
 } from '../modules/invitations/invitationsRepository';
-import { createSessionRegistry, type SessionRegistry } from '../modules/sessions/sessionRegistry';
+import {
+  createSessionRegistry,
+  type PresenceSource,
+  type SessionRegistry,
+} from '../modules/sessions/sessionRegistry';
 import type { RealtimeNotifier } from '../ws/notifier';
 
 /**
@@ -203,10 +208,18 @@ export function createStubPairingRepository(): PairingRepository & {
   state: PairingState;
   lookup: PairingCodeLookup;
   detailsSeen: CoupleDetails | undefined;
+  partner: PartnerProfile | null;
 } {
   let failure: PairingError | null = null;
   const stub = {
     state: structuredClone(emptyState) as PairingState,
+    /** Set to null by a test that wants to look unpaired. */
+    partner: {
+      id: OTHER_USER_ID,
+      nickname: 'Other',
+      avatarKey: 'fox',
+      gender: 'female',
+    } as PartnerProfile | null,
     lookup: {
       status: 'ok',
       needsCoupleDetails: false,
@@ -221,6 +234,10 @@ export function createStubPairingRepository(): PairingRepository & {
 
     async getState(): Promise<PairingState> {
       return stub.state;
+    },
+
+    async findPartner(): Promise<PartnerProfile | null> {
+      return stub.partner;
     },
 
     async lookupCode(): Promise<PairingCodeLookup> {
@@ -453,7 +470,17 @@ export function createStubInvitationsRepository(): InvitationsRepository & {
   return stub;
 }
 
+/**
+ * Who is online, for the route tests.
+ *
+ * Everybody, by default — a route test is about status codes and notifications, not about who
+ * happens to have a socket. A test that cares says so by passing its own answer.
+ */
+export function createTestPresence(online: boolean | ((userId: string) => boolean) = true): PresenceSource {
+  return { isOnline: typeof online === 'function' ? online : () => online };
+}
+
 /** A real session registry with everybody online, which is what the route tests want. */
 export function createTestSessionRegistry(): SessionRegistry {
-  return createSessionRegistry(createRecordingNotifier(), { isOnline: () => true });
+  return createSessionRegistry(createRecordingNotifier(), createTestPresence());
 }
