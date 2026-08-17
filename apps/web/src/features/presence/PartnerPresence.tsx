@@ -4,7 +4,7 @@ import { avatarGlyph } from '@/features/onboarding/avatars';
 import { usePartnerPresence } from '@/features/presence/usePartnerPresence';
 
 /**
- * Your partner's face, with a dot under it saying whether they are here.
+ * Your partner's face, with a badge on its corner saying whether they are here.
  *
  * It replaces the pill that used to report *your own* socket status, which told you something you
  * could already see — the page was working — and left the one genuinely useful fact unsaid. What
@@ -15,8 +15,8 @@ import { usePartnerPresence } from '@/features/presence/usePartnerPresence';
  */
 
 const DOT = {
-  online: { className: 'bg-mint', label: 'online' },
-  offline: { className: 'bg-blush', label: 'offline' },
+  online: { className: 'bg-status-online', label: 'online' },
+  offline: { className: 'bg-status-offline', label: 'offline' },
   unknown: { className: 'bg-line', label: 'checking' },
 } as const;
 
@@ -30,7 +30,7 @@ export function PartnerPresence() {
 
   return (
     <span
-      className="flex flex-col items-center gap-1"
+      className="relative inline-flex"
       role="status"
       aria-live="polite"
       aria-label={`${partner.nickname} is ${state.label}`}
@@ -42,7 +42,7 @@ export function PartnerPresence() {
         {avatarGlyph(partner.avatarKey)}
       </span>
       <span
-        className={`size-2 rounded-pill transition-colors duration-soft ${state.className}`}
+        className={`absolute -right-0.5 -bottom-0.5 z-10 size-3 rounded-pill border-2 border-cream transition-colors duration-soft ${state.className}`}
         aria-hidden="true"
       />
     </span>

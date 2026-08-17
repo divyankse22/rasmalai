@@ -1,7 +1,14 @@
 import { createServer, type Server } from 'node:http';
 import WebSocket from 'ws';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { EVENTS, createEnvelope, parseEnvelope, serializeEnvelope, type Envelope } from '@rasmalai/shared';
+import {
+  EVENTS,
+  createEnvelope,
+  parseEnvelope,
+  serializeEnvelope,
+  type Envelope,
+  type PartnerPresence,
+} from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
 import { SessionError } from '../modules/sessions/sessionError';
 import {
@@ -133,6 +140,9 @@ const sessionsStub: SessionRegistry = {
     if (refuseWith) throw refuseWith;
   },
   sessionIdForUser: () => runningSessionId,
+  closeTournamentSession() {
+    throw new Error('tournament sessions are not closed over the socket');
+  },
   setReady(...args) {
     calls.push({ method: 'setReady', args });
   },
@@ -293,6 +303,99 @@ describe('websocket handshake', () => {
 
     expect(frame.payload).toMatchObject({ code: 'invalid_action' });
     expect(client.socket.readyState).toBe(WebSocket.OPEN);
+    client.socket.close();
+  });
+});
+
+describe('partner presence snapshot', () => {
+  let snapshotServer: Server;
+  let snapshotRealtime: RealtimeServer;
+  let snapshotUrl: string;
+  let snapshot: PartnerPresence;
+
+  function snapshotConnect(): { socket: WebSocket; next: () => Promise<Envelope> } {
+    const socket = new WebSocket(snapshotUrl);
+    const received: Envelope[] = [];
+    const waiters: ((envelope: Envelope) => void)[] = [];
+    socket.on('message', (raw) => {
+      const parsed = parseEnvelope(raw.toString());
+      if (!parsed.ok) throw new Error('server sent an unparseable frame');
+      const waiter = waiters.shift();
+      if (waiter) waiter(parsed.envelope);
+      else received.push(parsed.envelope);
+    });
+    return {
+      socket,
+      next: () =>
+        new Promise<Envelope>((resolve, reject) => {
+          const queued = received.shift();
+          if (queued) return resolve(queued);
+          const timer = setTimeout(() => reject(new Error('timed out waiting for a frame')), 2000);
+          waiters.push((envelope) => {
+            clearTimeout(timer);
+            resolve(envelope);
+          });
+        }),
+    };
+  }
+
+  beforeEach(async () => {
+    snapshot = {
+      partner: { id: 'partner-1', nickname: 'Bo', avatarKey: 'penguin', gender: 'male' },
+      online: true,
+    };
+    snapshotServer = createServer();
+    snapshotRealtime = attachWebSocketServer(snapshotServer, {
+      verifier,
+      authTimeoutMs: 150,
+      heartbeatIntervalMs: 60,
+      // Reads whatever the test last set, so a single stub can answer differently across calls
+      // within the same test — the way the real one answers differently as presence changes.
+      presenceSnapshotFor: async () => snapshot,
+    });
+    snapshotServer.listen(0);
+    await new Promise((resolve) => snapshotServer.once('listening', resolve));
+
+    const address = snapshotServer.address();
+    if (address === null || typeof address === 'string') throw new Error('expected a TCP address');
+    snapshotUrl = `ws://127.0.0.1:${address.port}/ws`;
+  });
+
+  afterEach(async () => {
+    await snapshotRealtime.close();
+    await new Promise((resolve) => snapshotServer.close(resolve));
+  });
+
+  it('sends a partner presence snapshot right after authenticating', async () => {
+    const client = snapshotConnect();
+    await open(client.socket);
+    authenticate(client.socket, 'good');
+
+    expect((await client.next()).type).toBe(EVENTS.connection.authenticated);
+    const frame = await client.next();
+    expect(frame.type).toBe(EVENTS.presence.partnerSnapshot);
+    expect(frame.payload).toEqual(snapshot);
+    client.socket.close();
+  });
+
+  it('sends a fresh snapshot again on reauthenticate, the same way a reconnect does', async () => {
+    const client = snapshotConnect();
+    await open(client.socket);
+    authenticate(client.socket, 'good');
+    await client.next();
+    await client.next();
+
+    // Presence changed while this socket held its old snapshot — exactly what a genuine reconnect
+    // after a missed transition would look like from the client's side.
+    snapshot = { ...snapshot, online: false };
+    client.socket.send(
+      serializeEnvelope(createEnvelope(EVENTS.connection.reauthenticate, { accessToken: 'good' })),
+    );
+
+    expect((await client.next()).type).toBe(EVENTS.connection.authenticated);
+    const frame = await client.next();
+    expect(frame.type).toBe(EVENTS.presence.partnerSnapshot);
+    expect(frame.payload).toEqual(snapshot);
     client.socket.close();
   });
 });

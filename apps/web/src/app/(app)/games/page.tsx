@@ -35,7 +35,9 @@ export default async function GamesPage() {
 
       <GameCatalogue games={data.games} />
 
-      <TournamentCard />
+      {/* The same catalogue the list above renders, so a series can only be built from games that
+          actually exist. The card filters it down to the ones with a module behind them. */}
+      <TournamentCard games={data.games} />
     </main>
   );
 }

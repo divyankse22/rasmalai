@@ -90,6 +90,14 @@ export const EVENTS = {
      */
     partnerOnline: 'partner.online',
     partnerOffline: 'partner.offline',
+    /**
+     * Server → client, unprompted, right after `connection.authenticated` — on the first connection
+     * and again on every reconnect. Carries `PartnerPresence`: the whole answer, not just a
+     * transition, because a stream of `partner.online`/`partner.offline` frames cannot tell a socket
+     * that has just opened where things already stand. This is what lets presence be push-only —
+     * there is no REST fallback to seed or backstop it with.
+     */
+    partnerSnapshot: 'partner.snapshot',
   },
   game: {
     actionRequest: 'game.action.request',
@@ -103,6 +111,15 @@ export const EVENTS = {
     matchResult: 'match.result',
     tournamentGameResult: 'tournament.game.result',
     tournamentUpdated: 'tournament.updated',
+    /**
+     * Server → both: the next game of a tournament is open, and this is its session id.
+     *
+     * Not in docs/04's list, and needed because a tournament game is not a rematch (D-2). A rematch
+     * replays inside the session it just finished in; a tournament advances to a *different* game,
+     * which is a different session — and nothing else in the protocol moves two people to a session
+     * they never had to accept an invitation to.
+     */
+    tournamentNextGame: 'tournament.next_game',
   },
   reaction: {
     sent: 'reaction.sent',

@@ -15,7 +15,7 @@ import { postToApi } from '@/lib/clientApi';
  */
 export function InviteButton({ gameSlug, gameName }: { gameSlug: string; gameName: string }) {
   const router = useRouter();
-  const { refresh } = usePartnerPresence();
+  const { online } = usePartnerPresence();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
@@ -23,12 +23,12 @@ export function InviteButton({ gameSlug, gameName }: { gameSlug: string; gameNam
     setBusy(true);
     setError(undefined);
 
-    // Asked at the moment of the press rather than trusted from the last poll: an invitation lives
-    // five minutes and holds the couple's one slot for all of it, so a stale "they're here" costs
-    // more than the round trip does. The server refuses this too — this only saves the wait and
-    // the dead invitation. A `null` answer means we could not tell, and not being able to tell is
-    // no reason to stop somebody playing.
-    if ((await refresh()) === false) {
+    // The socket has already told us this — there is nothing fresher to ask for. An invitation
+    // lives five minutes and holds the couple's one slot for all of it, so this check is what
+    // saves the wait and the dead invitation; the server refuses it too, and is the one that
+    // actually decides. `null` means we could not tell (our own connection is down), and not being
+    // able to tell is no reason to stop somebody playing.
+    if (online === false) {
       setBusy(false);
       setError('They are offline. Try when they are online next time.');
       return;

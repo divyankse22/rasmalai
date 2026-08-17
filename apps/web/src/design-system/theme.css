@@ -25,6 +25,11 @@
   --color-muted: #8b7684;
   --color-line: #f1e3ea;
 
+  /* Presence status: genuine alert colours, not the pastel palette above. A status dot has to read
+     unambiguously as "online" or "offline" at a glance, and a soft mint/blush tint can't do that. */
+  --color-status-online: #34c759;
+  --color-status-offline: #ff3b30;
+
   /* Type. System stacks only, so builds stay deterministic and offline-friendly. */
   --font-display: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Quicksand', system-ui, sans-serif;
   --font-body: ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;

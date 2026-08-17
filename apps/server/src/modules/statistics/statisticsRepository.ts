@@ -46,6 +46,14 @@ export interface StartMatchInput {
   gameSlug: string;
   mode: MatchMode;
   startedAt: Date;
+  /**
+   * The tournament this match belongs to, written straight onto the row (`0008`).
+   *
+   * Kept on `matches` rather than only on `tournament_games` because it is the direction the reads
+   * want: "which matches were part of this series" is a question about matches. The reverse link is
+   * set when the series advances.
+   */
+  tournamentId?: string;
 }
 
 /** One seat's outcome, already resolved from a seat to a person by the session registry. */
@@ -219,7 +227,7 @@ export function createStatisticsRepository(pool: Pool): StatisticsRepository {
   }
 
   return {
-    async startMatch({ coupleId, gameSlug, mode, startedAt }) {
+    async startMatch({ coupleId, gameSlug, mode, startedAt, tournamentId }) {
       const game = await pool.query<{ id: string }>('select id from public.games where slug = $1', [
         gameSlug,
       ]);
@@ -232,10 +240,10 @@ export function createStatisticsRepository(pool: Pool): StatisticsRepository {
       }
 
       const { rows } = await pool.query<{ id: string }>(
-        `insert into public.matches (couple_id, game_id, mode, status, started_at)
-         values ($1, $2, $3, 'active', $4)
+        `insert into public.matches (couple_id, game_id, mode, status, started_at, tournament_id)
+         values ($1, $2, $3, 'active', $4, $5)
          returning id`,
-        [coupleId, gameId, mode, startedAt],
+        [coupleId, gameId, mode, startedAt, tournamentId ?? null],
       );
 
       const matchId = rows[0]?.id;

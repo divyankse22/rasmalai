@@ -12,6 +12,8 @@ import {
   type SessionEndedPayload,
   type SessionPlayer,
   type SessionView,
+  type TournamentNextGamePayload,
+  type TournamentUpdatedPayload,
 } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
@@ -19,6 +21,10 @@ import { PersonName } from '@/design-system/PersonName';
 import { gameGlyph } from '@/features/dashboard/gameGlyphs';
 import { avatarGlyph } from '@/features/onboarding/avatars';
 import { formatClock, useCountdown } from '@/features/play/useCountdown';
+import {
+  TournamentFinale,
+  TournamentScoreboard,
+} from '@/features/tournament/TournamentScoreboard';
 import { GameMount } from '@/games/GameMount';
 import { useRealtime, useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
@@ -268,6 +274,35 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           return;
         }
 
+        // The next game of a series is a different game in a different session, so this is a
+        // navigation rather than a state change. Both partners get it, which is what moves the one
+        // who is not looking at the button they both pressed.
+        if (envelope.type === EVENTS.results.tournamentNextGame) {
+          const { sessionId: next } = envelope.payload as TournamentNextGamePayload;
+          if (next === sessionId) return;
+          endedRef.current = true;
+          router.push(`/play/${next}`);
+          return;
+        }
+
+        /**
+         * The standings moved.
+         *
+         * Patched into the session rather than replacing it: the result frame that carries the
+         * match is sent before the series has finished scoring it, so these arrive second and must
+         * not undo the screen they are catching up with.
+         */
+        if (
+          envelope.type === EVENTS.results.tournamentUpdated ||
+          envelope.type === EVENTS.results.tournamentGameResult
+        ) {
+          const { tournament } = envelope.payload as TournamentUpdatedPayload;
+          setSession((current) =>
+            current && current.tournament?.id === tournament.id ? { ...current, tournament } : current,
+          );
+          return;
+        }
+
         if (envelope.type === EVENTS.reaction.sent) {
           const { reaction, fromUserId } = envelope.payload as ReactionPayload;
           const key = Date.now() + Math.random();
@@ -302,7 +337,7 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           if (error.code === 'not_authorized') finish('That game is not yours.');
         }
       },
-      [sessionId, session?.you.userId, finish],
+      [sessionId, session?.you.userId, finish, router],
     ),
   );
 
@@ -330,6 +365,9 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
 
   const waitingForPartner = session.partner.awayUntil !== null;
   const playing = session.phase === 'active' || session.phase === 'finished';
+  const tournament = session.tournament;
+  // The last game of the series has been scored, so there is nothing to be ready for.
+  const seriesOver = tournament?.status === 'completed';
   const yourMove = session.turnUserId !== null && session.turnUserId === session.you.userId;
   // Under thirty seconds it stops being a detail and starts being the thing on screen.
   const movePressing = moveSeconds !== null && moveSeconds <= 30;
@@ -344,6 +382,10 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         </span>
         <h1 className="font-display text-xl font-bold text-ink">{session.gameName}</h1>
       </div>
+
+      {/* Where the series stands. Above the game rather than beside it, so it reads the same on a
+          phone as on a laptop — and only the games already played are scored (D-3). */}
+      {tournament && !seriesOver && <TournamentScoreboard tournament={tournament} />}
 
       {/* The two of them, until the game itself takes over the screen and shows its own scoreline. */}
       {!playing && (
@@ -380,24 +422,45 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         </Card>
       ) : null}
 
+      {/* The whole series is done, so this is the only scoreline that matters now. */}
+      {seriesOver && tournament && <TournamentFinale tournament={tournament} />}
+
       {session.phase === 'finished' && session.result && (
         <Card className="flex flex-col items-center gap-2 text-center">
           <ResultBanner result={session.result} partner={session.partner} />
 
-          <div className="mt-2 flex w-full flex-col items-center gap-1">
-            <Button
-              className="w-full"
-              variant={session.you.ready ? 'soft' : 'primary'}
-              onClick={toggleReady}
-            >
-              {session.you.ready ? 'Waiting for them…' : 'Rematch ✨'}
-            </Button>
-            <p className="text-xs text-muted">
-              {session.partner.ready
-                ? 'They want another go.'
-                : 'A rematch needs both of you to say so.'}
-            </p>
-          </div>
+          {/* D-2: each game is played once, so there is no rematch inside a series. Both of them
+              readying moves the evening on to the next game instead. */}
+          {seriesOver ? (
+            <div className="mt-2 flex w-full flex-col items-center gap-1">
+              <Button className="w-full" onClick={() => router.push('/dashboard')}>
+                Back to the dashboard
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-2 flex w-full flex-col items-center gap-1">
+              <Button
+                className="w-full"
+                variant={session.you.ready ? 'soft' : 'primary'}
+                onClick={toggleReady}
+              >
+                {session.you.ready
+                  ? 'Waiting for them…'
+                  : tournament
+                    ? 'Next game →'
+                    : 'Rematch ✨'}
+              </Button>
+              <p className="text-xs text-muted">
+                {session.partner.ready
+                  ? tournament
+                    ? 'They are ready for the next one.'
+                    : 'They want another go.'
+                  : tournament
+                    ? 'Both of you have to be ready to carry on.'
+                    : 'A rematch needs both of you to say so.'}
+              </p>
+            </div>
+          )}
         </Card>
       )}
 
@@ -467,6 +530,14 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
                   />{' '}
                   to stop here? Nobody wins or loses if they agree.
                 </>
+              ) : tournament && !seriesOver ? (
+                // D-5: the evening is put down where it stands rather than thrown away, and it
+                // keeps for two days. Worth saying, because "leave" everywhere else means "over".
+                <>
+                  Stop here? <span className="font-semibold">{tournament.name}</span> pauses at{' '}
+                  {tournament.yourTotalPoints}–{tournament.partnerTotalPoints}, and either of you
+                  can pick it up within two days.
+                </>
               ) : (
                 <>
                   Leave? It ends for{' '}
@@ -480,7 +551,7 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
                 Stay
               </Button>
               <Button className="flex-1" onClick={leave}>
-                {matchRunning ? 'Ask them' : 'Leave'}
+                {matchRunning ? 'Ask them' : tournament && !seriesOver ? 'Pause it' : 'Leave'}
               </Button>
             </div>
           </Card>

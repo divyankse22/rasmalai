@@ -35,8 +35,16 @@ import type {
 import {
   createSessionRegistry,
   type PresenceSource,
+  type SessionPlayerSeed,
   type SessionRegistry,
 } from '../modules/sessions/sessionRegistry';
+import type { TournamentEngine } from '../modules/tournaments/tournamentEngine';
+import type {
+  Tournament,
+  TournamentError,
+  TournamentGame,
+  TournamentRepository,
+} from '../modules/tournaments/tournamentRepository';
 import type { RealtimeNotifier } from '../ws/notifier';
 
 /**
@@ -483,4 +491,164 @@ export function createTestPresence(online: boolean | ((userId: string) => boolea
 /** A real session registry with everybody online, which is what the route tests want. */
 export function createTestSessionRegistry(): SessionRegistry {
   return createSessionRegistry(createRecordingNotifier(), createTestPresence());
+}
+
+export const TEST_TOURNAMENT_ID = '55555555-5555-5555-5555-555555555555';
+
+/** A tournament with `n` games, the first one open, and nothing played yet. */
+export function testTournament(overrides: Partial<Tournament> = {}): Tournament {
+  const slugs = ['reaction-speed', 'four-in-a-row', 'basketball'];
+  const games: TournamentGame[] = slugs.map((slug, index) => ({
+    id: `game-${index + 1}`,
+    gameId: `catalogue-${index + 1}`,
+    gameSlug: slug,
+    gameName: slug,
+    position: index + 1,
+    matchId: null,
+    scored: true,
+    status: index === 0 ? 'active' : 'pending',
+    pointsA: 0,
+    pointsB: 0,
+  }));
+
+  return {
+    id: TEST_TOURNAMENT_ID,
+    coupleId: TEST_COUPLE_ID,
+    name: 'Friday night',
+    status: 'active',
+    createdByUserId: TEST_USER_ID,
+    createdAt: new Date(),
+    startedAt: new Date(),
+    endedAt: null,
+    pausedUntil: null,
+    totalPointsA: 0,
+    totalPointsB: 0,
+    winnerUserId: null,
+    games,
+    ...overrides,
+  };
+}
+
+/**
+ * Stands in for the tournament repository.
+ *
+ * The transactional half — the partial unique index deciding a race, the 3/1/0 arithmetic, the
+ * sweep — is SQL, and is asserted against real Postgres by the manual verification rather than
+ * mocked into a shape it does not have. This exists so the routes can be tested for status codes,
+ * couple scoping and who gets told.
+ */
+export function createStubTournamentRepository(): TournamentRepository & {
+  failWith(error: TournamentError | null): void;
+  active: Tournament | null;
+  created: { name: string; gameSlugs: string[] }[];
+  abandoned: string[];
+} {
+  let failure: TournamentError | null = null;
+
+  const stub = {
+    active: null as Tournament | null,
+    created: [] as { name: string; gameSlugs: string[] }[],
+    abandoned: [] as string[],
+
+    failWith(error: TournamentError | null) {
+      failure = error;
+    },
+
+    async createTournament({ name, gameSlugs }: { name: string; gameSlugs: string[] }) {
+      if (failure) throw failure;
+      stub.created.push({ name, gameSlugs });
+      stub.active = testTournament({ name });
+      return stub.active;
+    },
+
+    async getActiveTournament() {
+      return stub.active;
+    },
+
+    async getTournament(tournamentId: string) {
+      return stub.active && stub.active.id === tournamentId ? stub.active : null;
+    },
+
+    async advanceGame() {
+      if (failure) throw failure;
+      return stub.active ?? testTournament();
+    },
+
+    async pauseTournament() {
+      stub.active = testTournament({ ...stub.active, status: 'paused' });
+      return stub.active;
+    },
+
+    async resumeTournament() {
+      if (failure) throw failure;
+      stub.active = testTournament({ ...stub.active, status: 'active' });
+      return stub.active;
+    },
+
+    async abandonTournament(tournamentId: string) {
+      stub.abandoned.push(tournamentId);
+      stub.active = null;
+    },
+
+    async abandonExpiredTournaments() {
+      return 0;
+    },
+
+    async pauseStrandedTournaments() {
+      return 0;
+    },
+  };
+
+  return stub as unknown as TournamentRepository & typeof stub;
+}
+
+/**
+ * Stands in for the engine.
+ *
+ * Opens a real session so the routes' ADR-009 behaviour is genuine, and records what it was asked
+ * to run. The sequencing itself is covered in `tournamentEngine.test.ts`.
+ */
+export function createStubTournamentEngine(
+  /** The registry the routes were given, when a test cares that the same one gets the session. */
+  sessions: SessionRegistry = createTestSessionRegistry(),
+): TournamentEngine & { started: string[]; forgotten: string[]; failNextStart: boolean } {
+  const stub = {
+    started: [] as string[],
+    forgotten: [] as string[],
+    failNextStart: false,
+
+    start({
+      tournament,
+      players,
+    }: {
+      tournament: Tournament;
+      userAId: string;
+      players: [SessionPlayerSeed, SessionPlayerSeed];
+    }) {
+      if (stub.failNextStart) throw new Error('no game module');
+      stub.started.push(tournament.id);
+      const game = tournament.games.find((candidate) => candidate.status === 'active');
+      return sessions.create({
+        coupleId: tournament.coupleId,
+        gameSlug: game?.gameSlug ?? 'reaction-speed',
+        gameName: game?.gameName ?? 'Reaction Speed',
+        players,
+        mode: 'tournament',
+        tournamentId: tournament.id,
+      }).id;
+    },
+
+    viewFor: () => null,
+    matchEnded() {},
+    nextGameRequested() {},
+    sessionClosed() {},
+    forget(tournamentId: string) {
+      stub.forgotten.push(tournamentId);
+    },
+    isRunning: () => false,
+    sweepStranded: () => Promise.resolve(0),
+    closeAll() {},
+  };
+
+  return stub as unknown as TournamentEngine & typeof stub;
 }

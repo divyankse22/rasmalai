@@ -25,6 +25,8 @@ export interface MatchStartedInput {
   gameSlug: string;
   mode: MatchMode;
   startedAt: Date;
+  /** The series this match is one game of. Absent for individual play. */
+  tournamentId?: string;
 }
 
 export type MatchOutcome =

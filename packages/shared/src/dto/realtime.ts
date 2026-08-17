@@ -110,6 +110,40 @@ export interface MatchResultView {
   byForfeit: boolean;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Tournaments
+// ---------------------------------------------------------------------------------------------
+
+export type TournamentStatus = 'pending' | 'active' | 'paused' | 'completed' | 'abandoned';
+
+/** One game in the tournament series, from the reader's perspective. */
+export interface TournamentGameView {
+  position: number;
+  gameSlug: string;
+  gameName: string;
+  /** P-4: only competitive games score 3/1/0. Unscored games show "—" on the board (D-6). */
+  scored: boolean;
+  status: 'pending' | 'active' | 'completed' | 'skipped';
+  /** Null for unscored games (D-6). */
+  yourPoints: number | null;
+  partnerPoints: number | null;
+}
+
+/** The whole tournament, already resolved to the reader's point of view. */
+export interface TournamentView {
+  id: string;
+  name: string;
+  status: TournamentStatus;
+  games: TournamentGameView[];
+  /** 1-indexed position of the game currently being played, or the next one to play. */
+  currentPosition: number;
+  yourTotalPoints: number;
+  partnerTotalPoints: number;
+  winner: 'you' | 'partner' | null;
+  /** ISO. When a paused tournament must be resumed by, or null (D-5). */
+  pausedUntil: string | null;
+}
+
 export interface SessionView {
   id: string;
   gameSlug: string;
@@ -149,6 +183,13 @@ export interface SessionView {
   turnDeadline: number | null;
   /** A pending "can we stop here?", or null. */
   leaveRequest: LeaveRequestView | null;
+  /**
+   * The tournament this session belongs to, or null for individual play.
+   *
+   * Carries the whole series — scores, game list, current position — so the play screen can
+   * render the scoreboard without a separate request.
+   */
+  tournament: TournamentView | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -227,10 +268,12 @@ export interface PresencePayload {
 }
 
 /**
- * `GET /api/presence/partner`. The one person whose presence you are allowed to ask about.
+ * `partner.snapshot`. The one person whose presence you are allowed to ask about.
  *
- * Carries the face as well as the answer so the header can draw itself from one request, wherever
- * in the app it happens to be mounted, without a dashboard payload to hang off.
+ * Pushed by the server right after `connection.authenticated`, on every connect and reconnect.
+ * Carries the face as well as the answer so the header (and anything else that needs it) can draw
+ * itself from the socket alone, wherever in the app it happens to be mounted, with no request to
+ * make.
  */
 export interface PartnerPresence {
   partner: { id: string; nickname: string; avatarKey: string; gender: 'male' | 'female' } | null;
@@ -322,3 +365,39 @@ export const COUNTDOWN_MS = 3_000;
 
 /** Invitations live five minutes (`docs/01` section 10). */
 export const INVITATION_TTL_MS = 5 * 60_000;
+
+/** A paused tournament expires after 48 hours (D-5). */
+export const TOURNAMENT_PAUSE_TTL_MS = 2 * 24 * 60 * 60_000;
+
+/** 3–7 games per tournament (D-1). */
+export const TOURNAMENT_MIN_GAMES = 3;
+export const TOURNAMENT_MAX_GAMES = 7;
+
+// ---------------------------------------------------------------------------------------------
+// Tournament payloads
+// ---------------------------------------------------------------------------------------------
+
+/** `tournament.game.result` — sent after each game in the series. */
+export interface TournamentGameResultPayload {
+  tournament: TournamentView;
+  /** The game that just finished. */
+  finishedPosition: number;
+}
+
+/** `tournament.updated` — sent on any tournament state change (pause, resume, complete, abandon). */
+export interface TournamentUpdatedPayload {
+  tournament: TournamentView;
+}
+
+/**
+ * `tournament.next_game` — the series has moved on, and this is where the next one is.
+ *
+ * A tournament game is not a rematch (D-2), so the session that just finished is closed and a fresh
+ * one opened rather than replayed in place. Both players get this and both navigate, exactly the
+ * way `game.invitation.accepted` moves them at the start of the series — there is no second
+ * invitation to accept, because they already committed to the whole run.
+ */
+export interface TournamentNextGamePayload {
+  sessionId: string;
+  tournament: TournamentView;
+}

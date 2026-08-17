@@ -6,6 +6,8 @@ import type { DashboardRepository } from '../modules/dashboard/dashboardReposito
 import type { InvitationsRepository } from '../modules/invitations/invitationsRepository';
 import type { PairingRepository } from '../modules/pairing/pairingRepository';
 import type { PresenceSource, SessionRegistry } from '../modules/sessions/sessionRegistry';
+import type { TournamentEngine } from '../modules/tournaments/tournamentEngine';
+import type { TournamentRepository } from '../modules/tournaments/tournamentRepository';
 import type { UsersRepository } from '../modules/users/usersRepository';
 import type { RealtimeNotifier } from '../ws/notifier';
 import { logger } from '../logger';
@@ -14,7 +16,7 @@ import { requestLogger } from './requestLogger';
 import { createDashboardRouter } from './routes/dashboard';
 import { createInvitationsRouter } from './routes/invitations';
 import { createPairingRouter } from './routes/pairing';
-import { createPresenceRouter } from './routes/presence';
+import { createTournamentsRouter } from './routes/tournaments';
 import { createUsersRouter } from './routes/users';
 
 export interface AppOptions {
@@ -26,12 +28,16 @@ export interface AppOptions {
   dashboard: DashboardRepository;
   invitations: InvitationsRepository;
   sessions: SessionRegistry;
+  /** Durable tournament state, and the in-memory thing that runs a live one. */
+  tournaments: TournamentRepository;
+  tournamentEngine: TournamentEngine;
   realtime: RealtimeNotifier;
   /**
-   * Who is online, read from the same socket registry the sessions read.
+   * Who is online, read from the same socket registry the sessions and the WebSocket layer's
+   * presence snapshot read.
    *
-   * One source, so the header, the invitation gate and a live game can never disagree about whether
-   * somebody is here.
+   * One source, so the invitation gate and a live game can never disagree about whether somebody is
+   * here — used here only by the invitation gate; the header gets presence over the socket.
    */
   presence: PresenceSource;
 }
@@ -46,6 +52,8 @@ export function createApp({
   dashboard,
   invitations,
   sessions,
+  tournaments,
+  tournamentEngine,
   realtime,
   presence,
 }: AppOptions) {
@@ -79,10 +87,23 @@ export function createApp({
   app.use('/api', createUsersRouter(verifier, users, realtime, pairingCodeLimit));
   app.use('/api', createPairingRouter(verifier, pairing, realtime, pairingCodeLimit));
   app.use('/api', createDashboardRouter(verifier, users, pairing, dashboard));
-  app.use('/api', createPresenceRouter(verifier, pairing, presence));
   app.use(
     '/api',
     createInvitationsRouter(verifier, invitations, sessions, users, realtime, pairing, presence),
+  );
+  app.use(
+    '/api',
+    createTournamentsRouter(
+      verifier,
+      tournaments,
+      tournamentEngine,
+      sessions,
+      users,
+      pairing,
+      dashboard,
+      realtime,
+      presence,
+    ),
   );
 
   app.use((_req: Request, res: Response) => {

@@ -24,13 +24,60 @@ Last updated: after slice 8 — match records, aggregates and retention.
 | 7b | Four in a Row | **done, verified** |
 | 7c | Session clock rework, partner presence, offline gate | **done**, automated gate green; two-account browser run outstanding |
 | 8 | Match records, lifetime aggregates, streaks, retention job | **done**, automated gate green; two-account browser run outstanding |
-| 9 | Tournaments | next |
+| 9 | Tournaments: create, lock, sequential play, 3/1/0, restart-on-failed-reconnect | **done**, automated gate green; two-account browser run outstanding |
 | 10+ | Remaining games, mobile polish, deployment | not started |
 
-Gate at the time of writing: **407 tests passing**, typecheck, lint and both builds green
-(`npm run verify`), plus **78 statistics checks** against real Postgres — real matches played
-through the real session registry by two throwaway Supabase accounts, created, paired and deleted
-by the run itself.
+Gate at the time of writing: **452 tests passing**, typecheck, lint and both builds green
+(`npm run verify`), plus **78 statistics checks** and **27 tournament checks** against real
+Postgres — real matches and real series run through the real repository by throwaway Supabase
+accounts, created, paired and deleted by the run itself.
+
+---
+
+## Slice 9: an evening instead of a game
+
+A tournament is a locked run of three to seven games played one after another for points — win 3,
+draw 1, lose 0. `0008` adds `tournaments` and `tournament_games`, and one nullable
+`matches.tournament_id`.
+
+**The shape of it is one new module and one new seam.** `tournamentRepository` owns the durable
+state and every piece of arithmetic; `tournamentEngine` owns the sequence — which game is open,
+whose session it is, and what happens when that session ends. The session registry learned exactly
+four callbacks (`TournamentHooks`) and nothing else: it does not know what a tournament is, where
+one is stored, or how one is scored.
+
+**What each ending means** is the whole of the design, and the table is the specification:
+
+| ending | consequence |
+|---|---|
+| played to a result | scored; the series advances when **both** ask for the next one |
+| reconnect window ran out | the game **restarts** (`docs/04` §6) — a dropped connection is not points |
+| ran out twice in a row | the series **pauses** (`docs/13` §6) |
+| they agreed to stop mid-match | the series **pauses** (D-5) |
+| walked away from the results screen | the series **pauses** (D-5) |
+
+Two of those needed a signal the registry did not have. `matchEnded` is latched to fire once per
+session, so a completed game is never re-reported as an abandonment; `sessionClosed` is *not*
+latched, because a game can finish perfectly well and then be walked away from, and those are two
+different facts. The second one is the only thing that can tell a series has been left sitting
+between games, and D-5 hangs on it entirely.
+
+**No rematch inside a series (D-2).** Each game is played once, so both players readying on a
+results screen means "on to the next one", not "again" — and the next one is a different game in a
+different session. `maybeStartCountdown` refuses to count down there and asks the engine instead,
+which closes the finished session (freeing the couple's one slot, ADR-009) and opens the next.
+
+**Decisions queue rather than drop.** The first cut latched the engine while an async decision was
+in flight and ignored anything that arrived underneath it. That is wrong in a way tests caught:
+both players readying while the previous result was still being written is entirely ordinary, and
+refusing it left the series stuck on a results screen with nothing able to move it. They now chain,
+exactly like `matchRecorder`'s writes, and each one re-checks where the series actually is when its
+turn comes.
+
+**A restart of the process no longer strands a series.** Live sessions are memory-only, so every
+`active` tournament at boot is one whose session died with the last process. `sweepStranded` pauses
+them, which puts them back on the dashboard with a Resume button and their 48 hours instead of
+leaving them unplayable forever.
 
 ---
 
@@ -125,17 +172,27 @@ one in the room and takes it. That is also what makes the first bug above imposs
 merely unlikely.
 
 **Presence moved to where it is useful.** The header used to report your own socket status, which
-told you something you could already see. It now shows your partner's face with a dot under it —
-socket-pushed on every transition, seeded by `GET /api/presence/partner` on load, with a 15-second
-backstop poll so a frame missed while a phone was asleep cannot leave it quietly wrong. Pressing
-Play re-asks before sending, and the server refuses outright with `partner_offline` if there is
-nobody there: an invitation to somebody signed out is five minutes of waiting for a sheet nobody
-will ever see, and it holds the couple's one slot the whole time.
+told you something you could already see. It now shows your partner's face with a badge on its
+corner. Pressing Play checks the same live value before sending, and the server refuses outright
+with `partner_offline` if there is nobody there regardless: an invitation to somebody signed out is
+five minutes of waiting for a sheet nobody will ever see, and it holds the couple's one slot the
+whole time.
 
 The couple-scoped presence frames were also renamed to `partner.online` / `partner.offline`. They
 had been sharing `player.connected` / `player.disconnected` with the session's own presence events
 while carrying a completely different payload, and every client listener "handled" them by reading
 a `session` field that was not there and dropping the frame.
+
+**Presence became push-only.** `GET /api/presence/partner` and its 15-second frontend backstop poll
+are gone. In their place, the server pushes a `partner.snapshot` frame — the whole answer, not just
+a transition — right after a socket authenticates, which happens on the first connection and again
+on every reconnect. `partner.online` / `partner.offline` cover every transition in between. A
+reconnect already re-runs the auth handshake, so it now also re-seeds the snapshot for free, and
+there is no longer a separate resync call to make. The frontend hook became a single provider
+(`PartnerPresenceProvider`), mounted once in the app layout, so every consumer reads the same live
+value instead of each holding its own copy — `InviteButton`'s pre-flight check reads it directly
+rather than forcing a fresh request, with the server's own `partner_offline` check as the backstop
+that actually matters.
 
 ## Onboarding has two branches
 
@@ -497,9 +554,9 @@ Not "it compiles" — these were actually run.
   first, goes to whoever comes back, and goes to nobody when neither does.
 - A session neither of them ever opens cleans itself up rather than holding the couple's slot for
   the life of the process.
-- `GET /api/presence/partner` is 401 without a token, 200 with `partner: null` for somebody
-  unpaired, and derives the couple from the token's membership so there is no way to ask about
-  anybody else.
+- A socket is handed a `partner.snapshot` right after authenticating, again on reauthenticate the
+  same way a reconnect would see it, and derives the couple from the token's membership so there is
+  no way to ask about anybody else.
 - `POST /api/invitations` refuses with `partner_offline` and writes nothing when the partner has no
   socket open.
 
@@ -740,6 +797,23 @@ Not "it compiles" — these were actually run.
    path was proved to mirror them between both partners — but nobody has watched a dashboard change
    after finishing a game in a browser. It shares this with slice 7c, and the two are the same
    sitting: two Google accounts, two browser profiles, one evening.
+
+25. **A tournament cannot actually be started yet — only two games have modules.** D-1 sets the
+   minimum at three, and the catalogue currently enables `reaction-speed` and `four-in-a-row`. The
+   whole slice is proved end to end against real Postgres (the drill temporarily enabled a third,
+   non-competitive game so the unscored path was exercised for real, then switched it back), but
+   the couple cannot use the feature until slice 10 ships a third game. Nothing is broken; the
+   create screen simply cannot reach three selections.
+26. **Slice 9 has not been through a two-account browser run.** The sequencing is covered
+   deterministically, the routes are covered for status codes and who gets told, and the repository
+   was run through create → advance → complete → pause → resume → expire → sweep against the real
+   database. What nobody has done is play a real series in two browser profiles — which is blocked
+   on the item above anyway. It joins slices 7c and 8 in the same outstanding sitting.
+27. **A tournament game restarted by a failed reconnect writes a second `matches` row.** The
+   abandoned attempt is recorded under P-8 and counted by nothing, which is correct, but it means a
+   series with restarts has more match rows than games. `tournament_games.match_id` resolves to the
+   latest attempt, and `matches.tournament_id` is the authoritative link in the direction reads
+   actually want.
 
 ---
 

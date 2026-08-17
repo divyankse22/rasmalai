@@ -8,6 +8,7 @@ import {
   createEnvelope,
   parseEnvelope,
   serializeEnvelope,
+  type PartnerPresence,
   type ProtocolError,
 } from '@rasmalai/shared';
 import type { TokenVerifier } from '../auth/tokenVerifier';
@@ -94,6 +95,13 @@ export interface WebSocketServerOptions {
    * know. Presence is couple-scoped like everything else; nobody else is ever told.
    */
   partnerOf?: (userId: string) => Promise<string | null>;
+  /**
+   * Builds the snapshot a socket is handed right after it authenticates: who its own partner is and
+   * whether they are online right now. Without this there would be no way to answer "where do things
+   * stand" for a socket that has just opened — a stream of `partner.online`/`partner.offline`
+   * transitions only ever describes a change, never a starting point.
+   */
+  presenceSnapshotFor?: (userId: string) => Promise<PartnerPresence>;
 }
 
 export interface RealtimeServer {
@@ -119,6 +127,7 @@ export function attachWebSocketServer(
     registry = new SocketRegistry(),
     sessions,
     partnerOf,
+    presenceSnapshotFor,
   }: WebSocketServerOptions,
 ): RealtimeServer {
   const wss = new WebSocketServer({ server, path, maxPayload: MAX_ENVELOPE_BYTES });
@@ -204,6 +213,18 @@ export function attachWebSocketServer(
       // one. A game can start within seconds of the page loading, and latency compensation with no
       // sample yet is no compensation at all.
       probe(socket, state);
+
+      // The whole answer, not just a transition — sent on this connection and again on every
+      // reconnect, since re-authenticating runs this same path. This is what a fresh socket needs
+      // instead of a REST fetch, and what a socket coming back after a drop needs instead of a
+      // resync call: the same handshake that recreates the connection also recreates the snapshot.
+      if (presenceSnapshotFor) {
+        void presenceSnapshotFor(user.userId)
+          .then((snapshot) => send(socket, EVENTS.presence.partnerSnapshot, snapshot))
+          .catch((error: unknown) => {
+            logger.warn({ err: error, userId: user.userId }, 'could not send partner presence snapshot');
+          });
+      }
 
       // If they are in a game, they are told where it stands before they ask.
       //

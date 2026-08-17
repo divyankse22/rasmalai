@@ -20,6 +20,7 @@ import {
   type SessionPhase,
   type SessionPlayer,
   type SessionView,
+  type TournamentView,
 } from '@rasmalai/shared';
 import { logger } from '../../logger';
 import {
@@ -171,9 +172,19 @@ interface Session {
   /**
    * Individual or tournament. Tournaments restart a game whose player never came back rather than
    * awarding it (`docs/04` section 6), so the platform decides the consequence and no game module
-   * has to know which kind of match it is in. Slice 9 starts setting this to anything else.
+   * has to know which kind of match it is in.
    */
   mode: 'individual' | 'tournament';
+  /** The series this session is one game of, or null for individual play. */
+  tournamentId: string | null;
+  /**
+   * Whether the tournament has already been told how this session's match ended.
+   *
+   * Exactly once per session, and for the same reason `matchKey` is: a finished match is announced
+   * by `finishMatch`, and the `endSession` that follows when the engine closes the results screen
+   * must not announce it a second time as an abandonment.
+   */
+  tournamentNotified: boolean;
   /** P-3: only a competitive game's result is a win over somebody. */
   competitive: boolean;
   /** Whether this game's clock stops when a player drops, from its reconnect policy. */
@@ -192,6 +203,57 @@ export interface SessionEmitter {
   sendToUser(userId: string, type: string, payload: unknown): void;
 }
 
+/** How a tournament session's match ended, with every seat already resolved to a person. */
+export interface TournamentMatchEnded {
+  tournamentId: string;
+  /** The session it happened in, so the engine can close exactly the one it opened. */
+  sessionId: string;
+  coupleId: string;
+  gameSlug: string;
+  /**
+   * Whether the match produced a result at all.
+   *
+   * Null covers every way a tournament game can fail to happen — a reconnect window that ran out, a
+   * lobby neither of them ever loaded, an agreed stop. The engine decides which of those restarts
+   * the game and which pauses the series; the registry only reports what it saw.
+   */
+  played: boolean;
+  /** Null on a draw, on a non-competitive game, and whenever `played` is false. */
+  winnerUserId: string | null;
+  byForfeit: boolean;
+  /** Whether it ended because the two of them agreed to stop (D-5). */
+  byLeave: boolean;
+}
+
+/**
+ * What the registry needs from the tournament engine, and nothing more.
+ *
+ * Declared here rather than imported from the engine so the dependency points one way: sessions
+ * know that *something* may be running a series over them, and know nothing about how a series is
+ * stored, scored or advanced. The engine implements this; a test fakes it in four lines.
+ */
+export interface TournamentHooks {
+  /**
+   * The series as this reader sees it, for the session view. Synchronous on purpose — a session
+   * view is built on the hot path of every frame, and a database round trip has no business there.
+   * The engine holds the standings in memory and refreshes them when they change.
+   */
+  viewFor(tournamentId: string, userId: string): TournamentView | null;
+  /** A tournament game finished, or failed to. */
+  matchEnded(input: TournamentMatchEnded): void;
+  /** Both players asked for the next game from the results screen. */
+  nextGameRequested(tournamentId: string, sessionId: string): void;
+  /**
+   * A tournament session has closed, for any reason at all.
+   *
+   * Deliberately *not* latched the way `matchEnded` is, and deliberately separate from it: a game
+   * can finish perfectly well and then be walked away from, and those are two different facts. This
+   * is the second one — the only signal that a series has been left sitting between games with
+   * nothing left to advance it — and it is what D-5 hangs on.
+   */
+  sessionClosed(tournamentId: string, sessionId: string): void;
+}
+
 /** Injection points, used by tests to make an entire match deterministic. */
 export interface SessionRegistryOptions {
   findRules?: (slug: string) => AnyGameRules | null;
@@ -202,6 +264,11 @@ export interface SessionRegistryOptions {
    * statistics wants — and is why the registry stayed free of a database until slice 8.
    */
   recorder?: MatchRecorder;
+  /**
+   * The tournament engine, when one is running. Absent everywhere else, which is every test that is
+   * not about tournaments and any deployment with the feature switched off.
+   */
+  tournaments?: TournamentHooks;
 }
 
 export interface SessionRegistry {
@@ -210,6 +277,9 @@ export interface SessionRegistry {
     gameSlug: string;
     gameName: string;
     players: [SessionPlayerSeed, SessionPlayerSeed];
+    /** Defaults to individual. A tournament session must name the series it belongs to. */
+    mode?: 'individual' | 'tournament';
+    tournamentId?: string;
   }): SessionView;
   /** The view of a session as one of its players sees it. Throws if they are not in it. */
   viewFor(sessionId: string, userId: string): SessionView;
@@ -238,6 +308,15 @@ export interface SessionRegistry {
    */
   leave(sessionId: string, userId: string): void;
   react(sessionId: string, userId: string, reaction: Reaction): void;
+  /**
+   * Closes a tournament session from outside, so the couple's one slot (ADR-009) is free before the
+   * next game of the series opens in it.
+   *
+   * Only the engine calls this, and only for a session it opened itself. A no-op for a session that
+   * has already gone, which is the ordinary race when both players leave the results screen at the
+   * moment the engine was about to move them on.
+   */
+  closeTournamentSession(sessionId: string): void;
   /** Called by the socket layer when a person's last socket closes, or their first one opens. */
   handlePresence(userId: string, online: boolean): void;
   /** Ends everything. Used on shutdown so nobody is left staring at a dead lobby. */
@@ -255,6 +334,7 @@ export function createSessionRegistry(
     random,
     now = Date.now,
     recorder = NULL_MATCH_RECORDER,
+    tournaments,
   }: SessionRegistryOptions = {},
 ): SessionRegistry {
   const byId = new Map<string, Session>();
@@ -326,6 +406,12 @@ export function createSessionRegistry(
       leaveRequest: session.leaveRequest
         ? { byUserId: session.leaveRequest.byUserId, expiresAt: session.leaveRequest.expiresAt }
         : null,
+      // Resolved to this reader by the engine, so neither the registry nor the play screen ever has
+      // to know which of the couple's two slots the viewer occupies.
+      tournament:
+        session.tournamentId === null
+          ? null
+          : (tournaments?.viewFor(session.tournamentId, userId) ?? null),
     };
   }
 
@@ -518,12 +604,55 @@ export function createSessionRegistry(
     recorder.matchEnded({ matchKey, endedAt: new Date(now()), outcome });
   }
 
+  /**
+   * Tells the tournament how this session's game went, exactly once.
+   *
+   * Once, because both endings run through here: a game that finished announces itself from
+   * `finishMatch`, and the `endSession` that follows — when the engine closes the results screen, or
+   * when the two of them walk away from it — finds nothing left to say. Without the latch, every
+   * completed tournament game would be reported a second time as an abandonment and restarted.
+   *
+   * Seats become people here, like everywhere else the platform talks to something outside itself.
+   */
+  function notifyTournament(
+    session: Session,
+    outcome: { played: boolean; result?: GameResult; byForfeit?: boolean; byLeave?: boolean },
+  ): void {
+    if (session.mode !== 'tournament' || session.tournamentId === null) return;
+    if (session.tournamentNotified) return;
+    if (!tournaments) return;
+    session.tournamentNotified = true;
+
+    const winner = outcome.result?.winner;
+
+    tournaments.matchEnded({
+      tournamentId: session.tournamentId,
+      sessionId: session.id,
+      coupleId: session.coupleId,
+      gameSlug: session.gameSlug,
+      played: outcome.played,
+      // P-3 again, from the other direction: a game with no winner to award never names one, so a
+      // cooperative round in a tournament moves the series on without moving the standings.
+      winnerUserId:
+        outcome.played && session.competitive && winner !== undefined && winner !== null
+          ? session.players[winner].userId
+          : null,
+      byForfeit: outcome.byForfeit ?? false,
+      byLeave: outcome.byLeave ?? false,
+    });
+  }
+
   function endSession(
     session: Session,
     phase: 'finished' | 'abandoned',
     reason: SessionEndReason,
     byUserId?: string,
   ): void {
+    // Before `recordEnd` clears the match: a tournament session that reaches here without having
+    // announced a result never produced one, whatever the reason. The engine decides whether that
+    // restarts the game or pauses the series (D-5, `docs/13` section 6).
+    notifyTournament(session, { played: false, byLeave: reason === 'left' });
+
     // A match still open at this point is one nobody finished: an agreed stop, both of them gone,
     // a tournament game being restarted, or the process shutting down. P-8 — the row is written and
     // counted by nothing.
@@ -541,6 +670,12 @@ export function createSessionRegistry(
       ...(byUserId === undefined ? {} : { byUserId }),
     });
     forget(session);
+
+    // Last, and after `forget`: the engine may open the next game of the series from here, and the
+    // couple's one slot (ADR-009) has to be free before it tries.
+    if (session.mode === 'tournament' && session.tournamentId !== null) {
+      tournaments?.sessionClosed(session.tournamentId, session.id);
+    }
   }
 
   /** The match is over. The session is not: this is the results screen, and a rematch starts here. */
@@ -571,6 +706,11 @@ export function createSessionRegistry(
     syncClocks(session);
 
     broadcast(session, EVENTS.results.matchResult);
+
+    // After the frame, not before: the engine answers by pushing the new standings, and a client
+    // that received those before the result they belong to would show a scoreboard ahead of the
+    // match that moved it.
+    notifyTournament(session, { played: true, result, byForfeit });
   }
 
   /**
@@ -635,6 +775,7 @@ export function createSessionRegistry(
       gameSlug: session.gameSlug,
       mode: session.mode,
       startedAt: new Date(now()),
+      ...(session.tournamentId === null ? {} : { tournamentId: session.tournamentId }),
     });
 
     session.game = startMatch({
@@ -668,6 +809,17 @@ export function createSessionRegistry(
     // A rematch counts down from the results screen, so `finished` is a place a countdown can start
     // from just as much as the lobby is.
     if (!everyoneReady || (session.phase !== 'lobby' && session.phase !== 'finished')) return;
+
+    // D-2: there is no rematch inside a tournament. Each game is played once, so both of them being
+    // ready on a results screen means "on to the next one", not "again" — and the next one is a
+    // different game in a different session, which only the engine can open. It closes this session
+    // on its way, so nothing counts down here.
+    if (session.mode === 'tournament' && session.phase === 'finished') {
+      if (session.tournamentId !== null) {
+        tournaments?.nextGameRequested(session.tournamentId, session.id);
+      }
+      return;
+    }
 
     session.phaseBeforeCountdown = session.phase;
     session.phase = 'countdown';
@@ -798,7 +950,7 @@ export function createSessionRegistry(
       return byId.size;
     },
 
-    create({ coupleId, gameSlug, gameName, players }) {
+    create({ coupleId, gameSlug, gameName, players, mode = 'individual', tournamentId }) {
       // ADR-009: one active session per couple. The couple's previous session must be gone before
       // another can start, otherwise two games could be live at once and both would be wrong.
       const existing = byCouple.get(coupleId);
@@ -832,7 +984,9 @@ export function createSessionRegistry(
         result: null,
         resultByForfeit: false,
         leaveRequest: null,
-        mode: 'individual',
+        mode,
+        tournamentId: mode === 'tournament' ? (tournamentId ?? null) : null,
+        tournamentNotified: false,
         competitive: false,
         pauseOnDisconnect: true,
         countdownTimer: undefined,
@@ -1023,6 +1177,17 @@ export function createSessionRegistry(
           fromUserId: userId,
         });
       }
+    },
+
+    closeTournamentSession(sessionId) {
+      const session = byId.get(sessionId);
+      // Already gone: both of them left the results screen while the engine was opening the next
+      // game. Nothing to close, and the series carries on regardless.
+      if (!session) return;
+
+      // The engine only ever calls this for a session whose result it has already recorded, so the
+      // latch is set and this teardown says nothing to the tournament about an abandonment.
+      endSession(session, 'finished', 'left');
     },
 
     handlePresence(userId, online) {
