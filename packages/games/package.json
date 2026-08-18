@@ -17,16 +17,21 @@
     "@rasmalai/shared": "*"
   },
   "peerDependencies": {
-    "react": "^19.0.0"
+    "react": "^19.0.0",
+    "phaser": "^3.90.0"
   },
   "peerDependenciesMeta": {
     "react": {
+      "optional": true
+    },
+    "phaser": {
       "optional": true
     }
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "phaser": "^3.90.0"
   }
 }

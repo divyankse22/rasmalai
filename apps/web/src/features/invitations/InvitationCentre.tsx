@@ -1,7 +1,8 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { GAME_META } from '@rasmalai/games';
 import {
   EVENTS,
   type InvitationAcceptedPayload,
@@ -75,7 +76,33 @@ export function InvitationCentre() {
   const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
   const [announcing, setAnnouncing] = useState(false);
   const [busy, setBusy] = useState(false);
+  /**
+   * The invitation the "something else" picker is open over, or null.
+   *
+   * The id rather than a boolean, so the picker cannot outlive what it is countering: an invitation
+   * that is answered, withdrawn or replaced while the chips are on screen leaves them offering to
+   * counter something that is no longer there. Derived rather than reset in an effect — a `setState`
+   * in an effect is a second render nobody needs, and the lint rule that says so is right.
+   */
+  const [counteringFor, setCounteringFor] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
+
+  /**
+   * What a counter-proposal may propose: every game with a module behind it.
+   *
+   * `GAME_META` rather than the catalogue from `/api/dashboard`, which this component does not
+   * fetch and should not start a request for to draw three chips. The two agree by construction —
+   * `games.enabled` is flipped in a migration when a module lands (`0009`), and the server refuses
+   * anything unplayable with a `409` regardless, so the worst a drift could do is show a chip that
+   * comes back with a message rather than a game.
+   */
+  const alternatives = useMemo(
+    () =>
+      Object.values(GAME_META)
+        .filter((game) => game.slug !== invitation?.gameSlug)
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [invitation?.gameSlug],
+  );
 
   const expiresIn = useCountdown(invitation?.expiresAt);
 
@@ -160,15 +187,26 @@ export function InvitationCentre() {
     return () => clearTimeout(timer);
   }, [announcing, invitation?.id]);
 
-  async function answer(accept: boolean) {
+  /**
+   * Answering — and, when `counterGameSlug` is given, answering with something else in mind (P-7).
+   *
+   * A counter is a decline and a fresh invitation in one transaction on the server, so it is one
+   * call from here too. What comes back is the new invitation, pointing the other way: the person
+   * who was being asked is now the one asking.
+   */
+  async function answer(accept: boolean, counterGameSlug?: string) {
     if (!invitation) return;
     setBusy(true);
     setError(undefined);
 
-    const result = await postToApi<{ accepted: boolean; sessionId?: string }>(
-      `/api/invitations/${invitation.id}/respond`,
-      { accept },
-    );
+    const result = await postToApi<{
+      accepted: boolean;
+      sessionId?: string;
+      counterInvitation?: InvitationView | null;
+    }>(`/api/invitations/${invitation.id}/respond`, {
+      accept,
+      ...(counterGameSlug ? { counterGameSlug } : {}),
+    });
     setBusy(false);
 
     if (!result.ok) {
@@ -184,11 +222,16 @@ export function InvitationCentre() {
     }
 
     setAnnouncing(false);
+
     if (result.data.accepted && result.data.sessionId) {
       router.push(`/play/${result.data.sessionId}`);
-    } else {
-      setInvitation(null);
+      return;
     }
+
+    // Applied straight from the reply rather than waiting for the socket to say the same thing. The
+    // `game.invitation.created` frame is still coming and still authoritative; this only stops the
+    // sheet blinking empty for a round trip.
+    setInvitation(result.data.counterInvitation ?? null);
   }
 
   async function withdraw() {
@@ -214,20 +257,69 @@ export function InvitationCentre() {
   }
 
   const incoming = invitation.direction === 'incoming';
+  const countering = counteringFor === invitation.id;
 
   const who = (
     <PersonName name={invitation.otherUser.nickname} gender={invitation.otherUser.gender} />
   );
 
-  const actions = incoming ? (
-    <div className="flex gap-2">
-      <Button className="flex-1" disabled={busy} onClick={() => void answer(true)}>
-        ❤️ PLAY
-      </Button>
-      <Button variant="soft" className="flex-1" disabled={busy} onClick={() => void answer(false)}>
-        🙈 NOT NOW
+  /**
+   * "Not that one — this one instead."
+   *
+   * P-7 has always allowed a decline to carry a counter-proposal, and the server, the protocol and
+   * the transaction behind it have been done and tested since slice 6. What was missing was
+   * anywhere to press: with one game in the catalogue there was nothing to counter *with*, so the
+   * picker was deferred. Six games later it is three lines of chips.
+   */
+  const picker = (
+    <div className="flex flex-col gap-2">
+      <p className="text-center text-sm text-muted">…how about one of these?</p>
+      <ul className="flex flex-wrap justify-center gap-2">
+        {alternatives.map((game) => (
+          <li key={game.slug}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void answer(false, game.slug)}
+              className="flex items-center gap-1.5 rounded-pill bg-cream px-3 py-1.5 text-sm text-ink transition-colors duration-quick enabled:hover:bg-blush disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
+            >
+              <span aria-hidden="true">{gameGlyph(game.slug)}</span>
+              {game.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <Button variant="ghost" disabled={busy} onClick={() => setCounteringFor(null)}>
+        Back
       </Button>
     </div>
+  );
+
+  const actions = incoming ? (
+    countering ? (
+      picker
+    ) : (
+      <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
+          <Button className="flex-1" disabled={busy} onClick={() => void answer(true)}>
+            ❤️ PLAY
+          </Button>
+          <Button
+            variant="soft"
+            className="flex-1"
+            disabled={busy}
+            onClick={() => void answer(false)}
+          >
+            🙈 NOT NOW
+          </Button>
+        </div>
+        {alternatives.length > 0 && (
+          <Button variant="ghost" disabled={busy} onClick={() => setCounteringFor(invitation.id)}>
+            🎲 Something else instead
+          </Button>
+        )}
+      </div>
+    )
   ) : (
     <div className="flex flex-col items-center gap-2">
       <p className="text-sm text-muted">Waiting for them to answer…</p>

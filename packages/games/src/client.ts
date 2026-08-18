@@ -27,6 +27,10 @@ export type GameLoader = () => Promise<{ default: GameComponent }>;
 const RENDERERS: Readonly<Record<string, GameLoader>> = {
   'reaction-speed': () => import('./reaction-speed/client'),
   'four-in-a-row': () => import('./four-in-a-row/client'),
+  memory: () => import('./memory/client'),
+  'guess-my-answer': () => import('./guess-my-answer/client'),
+  'bomb-defusal': () => import('./bomb-defusal/client'),
+  reflex: () => import('./reflex/client'),
 };
 
 export function findGameRenderer(slug: string): GameLoader | null {

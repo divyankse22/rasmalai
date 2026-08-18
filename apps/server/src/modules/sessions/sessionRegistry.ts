@@ -374,7 +374,11 @@ export function createSessionRegistry(
     byForfeit: boolean,
   ): MatchResultView {
     return {
-      outcome: result.draw ? 'drawn' : result.winner === seat ? 'won' : 'lost',
+      // P-3 decides this before the scoreline does. A cooperative or social game has no winner to
+      // name, so `winner` is null by contract — and read naively that made *both* players the loser,
+      // because "not the winner" is what `lost` means for every other game. Nobody beat anybody:
+      // `drawn` is the only one of the three that is true of a game with no sides.
+      outcome: !competitive || result.draw ? 'drawn' : result.winner === seat ? 'won' : 'lost',
       yourScore: result.scores[seat],
       theirScore: result.scores[otherSeat(seat)],
       competitive,

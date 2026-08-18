@@ -22,4 +22,7 @@ export const meta: GameMeta = {
   // Seven across by six up is close enough to square to be happy either way up.
   orientation: 'any',
   inputs: ['tap', 'keyboard', 'pointer'],
+  // One board is one match, so a score here is 1 or 0 and a lifetime best of "1" says only that you
+  // have won at least once. Nothing worth a line on the card.
+  formatScore: () => null,
 };

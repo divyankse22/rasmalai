@@ -46,6 +46,23 @@ export interface GameMeta {
   players: 2;
   orientation: 'any' | 'portrait' | 'landscape';
   inputs: readonly ('tap' | 'swipe' | 'keyboard' | 'pointer')[];
+  /**
+   * How one of this game's scores reads on its own — `"4 rounds"`, `"18.4s"`, `"9 pairs"` — or
+   * null when a bare number means nothing worth showing.
+   *
+   * `GameResult.scores` is deliberately unitless: higher is better and that is the whole contract,
+   * because `matches.score_a` has to compare against itself and nothing else. That leaves the
+   * platform holding a number with no idea what it counts, and a catalogue card reading
+   * "best 14200" for a game measured in milliseconds is worse than no card at all.
+   *
+   * So the game says. Null is a real answer and the reason this returns one: Four in a Row scores
+   * 1–0, and a lifetime best of "1" tells nobody anything except that they have won once. (A
+   * cooperative or social game rarely has to decide — P-3 keeps its best-score columns empty, so
+   * nothing ever asks — but answering honestly costs nothing and is right if P-3 ever moves.)
+   *
+   * Optional, so a game whose score is a plain count of things needs to say nothing at all.
+   */
+  formatScore?(score: number): string | null;
 }
 
 export interface ReconnectPolicy {

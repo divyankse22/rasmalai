@@ -6,7 +6,7 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: after slice 8 — match records, aggregates and retention.
+Last updated: after slice 10 — four more games, the first canvas, and the counter-proposal picker.
 
 ---
 
@@ -25,12 +25,135 @@ Last updated: after slice 8 — match records, aggregates and retention.
 | 7c | Session clock rework, partner presence, offline gate | **done**, automated gate green; two-account browser run outstanding |
 | 8 | Match records, lifetime aggregates, streaks, retention job | **done**, automated gate green; two-account browser run outstanding |
 | 9 | Tournaments: create, lock, sequential play, 3/1/0, restart-on-failed-reconnect | **done**, automated gate green; two-account browser run outstanding |
-| 10+ | Remaining games, mobile polish, deployment | not started |
+| 10 | Memory, Guess My Answer, Bomb Defusal, Reflex (Phaser); counter-proposal UI; score units | **done**, automated gate green; two-account browser run outstanding |
+| 11+ | Mobile polish, deployment, remaining games | not started |
 
-Gate at the time of writing: **452 tests passing**, typecheck, lint and both builds green
-(`npm run verify`), plus **78 statistics checks** and **27 tournament checks** against real
-Postgres — real matches and real series run through the real repository by throwaway Supabase
-accounts, created, paired and deleted by the run itself.
+Gate at the time of writing: **557 tests passing**, typecheck, lint and both builds green
+(`npm run verify`), plus the **78 statistics checks** and **27 tournament checks** against real
+Postgres from earlier slices — real matches and real series run through the real repository by
+throwaway Supabase accounts, created, paired and deleted by the run itself.
+
+**Slice 10 has not been run against a live database or a browser.** Its 105 new unit tests, the
+catalogue-consistency guard, both builds and the bundle inspection are the evidence; `0009` has been
+written but not applied, and none of the four new games has been played by two people. See known
+limitations 28–31.
+
+---
+
+## Slice 10: four games, and the first one that moves
+
+The catalogue goes from two playable games to **six**, across all four categories and both
+renderers. Nothing about the platform changed to accommodate any of them — no new table, no new
+column, no new event, no edit to the session registry, the match runner or the socket layer. `0009`
+is two `update` statements.
+
+**Each of the four was chosen for a shape the contract had never been asked for.** Two games was one
+data point; six is a claim with some weight behind it.
+
+| game | category · scoring | what it exercises that nothing else did |
+|---|---|---|
+| Memory | casual · **competitive** | the server keeping a secret on a board both players are looking at |
+| Guess My Answer | social · social | both seats acting **at once**, in secret, neither waiting on the other |
+| Bomb Defusal | cooperative · cooperative | `getView` as a **fork** — two different screens, neither playable alone |
+| Reflex | competitive · competitive | continuous motion, a canvas, and game time that stops |
+
+**`pause` turned out to mean four different things**, which is the most useful thing this slice
+found out about the contract. Reaction Speed discards what was in flight because a round nobody
+could see must not be scored. Four in a Row and Guess My Answer do nothing, because a board and a
+locked-in answer are facts. Memory **freezes and then restarts** its peek from the beginning, since
+the two cards showing are the only thing the move produced and somebody whose phone dropped never
+got their look at them. Bomb Defusal and Reflex freeze and resume **exactly** — a fuse with fifty
+seconds left comes back with fifty seconds left. The contract already allowed all four; nothing had
+needed more than two of them before.
+
+**Memory is filed under casual and scored competitively.** Turning up more pairs than your partner
+is beating them — there is a winner, a loser, a margin and a rematch worth asking for — and P-3
+would have filed all of it under "counts towards nothing" purely because of which aisle the game
+sits in. `games.category` and `games.scoring_kind` exist separately for exactly this, and the
+contract says in as many words that a game may be shelved casual and scored competitively. `0009`
+moves the column so the module and the database agree.
+
+That divergence is also what finally put a test behind `playableSlugs()`, which has been documented
+since slice 7 as the thing that "keeps the seed honest" without anything holding it to it.
+`sessions/catalogue.test.ts` reads the migrations as text and checks both directions: every module
+has an enabled row, every enabled row has a module, and the module's `scoringKind`, `category` and
+`renderer` match the catalogue's. The third is the one that matters — a mismatch there *works*, and
+announces a winner on the results screen that the statistics then decline to record.
+
+**Bomb Defusal has no chat, and needs none.** `docs/01` section 14 rules out voice and text for V1,
+which on the face of it rules out the one game in the catalogue that is entirely about telling your
+partner something. The game carries the conversation instead: the defuser taps a wire to report its
+colour, the expert taps a wire to point at it. Two verbs, and Keep Talking and Nobody Explodes
+reduced to something two people can do on two phones in silence.
+
+Its manual lives in `server.ts` and reaches exactly one of the two screens. Not because the rules
+are secret from the couple — they will learn them, and getting faster at them is the game — but
+because a defuser who can read the manual out of their own bundle defuses the bomb alone, and then
+there is no cooperative game left. The built client bundles were grepped for the rule text to check
+this rather than assumed.
+
+**Reflex is the first Phaser game, and P-6's first real test.** Up to now "each game picks the
+cheapest renderer that works" had only ever resolved to React, because a board is a board. This is
+the first thing in the product that genuinely moves. What matters is what the canvas did *not*
+change: `reflex/server.ts` is the same pure, timer-free rulebook as every other game's, and the
+platform cannot tell which of its games are canvases. `renderer: 'phaser'` reaches one line of
+`client.ts`.
+
+- **Phaser is imported inside an effect**, never at module scope: this module is reachable from a
+  server render, and a top-level import reaches for `window` the moment it is evaluated.
+- **It is 1.2MB and it lands in its own chunk.** Checked in the built output rather than assumed:
+  the chunk containing Phaser is reached only through the lazy game loader, and none of the four
+  root chunks references it. Somebody reading their dashboard never downloads it.
+- **The palette is read out of `theme.css` at runtime** via `getComputedStyle`, so a canvas is not
+  the one screen in the product that a reskin would miss.
+- **`orientation: 'landscape'`** is the first non-`any` answer in the catalogue. Five lanes with room
+  to see what is coming wants width; the renderer copes either way rather than refusing to draw.
+
+The interesting half of Reflex is the timing. Both players run the **same** hazard schedule, so
+neither can draw a luckier board. Everything is measured in **game time**, which stops when somebody
+drops off — a schedule is a bad thing to try to survive a disconnect by shifting forty-five absolute
+deadlines. And a hazard is judged **150ms after it lands**, because a dodge made in time and
+delivered late would otherwise be a death caused by wifi, which is the one thing `docs/13` section 8
+says a competitive game must never do.
+
+Movement is one lane at a time with a 150ms cooldown, and that number is the entire difficulty of
+the game: without it a player could jump anywhere at any time and never be caught. The first
+version of it had a real bug — the lane a player is *placed* in was recorded like a move, so the
+cooldown ate everybody's very first step. A test that expected somebody one lane over and found them
+where they started is what caught it.
+
+**Two deferred items were closed alongside.** Known limitation 10 (score units) became
+`GameMeta.formatScore`, which returns a string or **null** — null being a real answer, and the
+reason it exists: Four in a Row scores 1–0, and a lifetime best of "1" says only that you have won
+once. Reflex is the case that made it necessary at all, since its score is a duration in
+milliseconds and "best 28640" on a catalogue card is worse than no card. Known limitation 9
+(counter-proposals) became three lines of chips in the invitation sheet — the server, protocol and
+transaction have been done since slice 6, and the reason the picker was deferred was that with one
+game there was nothing to counter *with*.
+
+**Two things were found and fixed on the way through.**
+
+- `resultView` read `winner === null` as "not the winner", so the first non-competitive game would
+  have made **both** players the loser. Nobody beat anybody: `drawn` is the only one of the three
+  that is true of a game with no sides. The results banner short-circuits on `competitive` before it
+  reads `outcome`, so nothing was on screen — but the field was a lie, and the tournament scoreboard
+  reads the same shape.
+- **The server's Docker image has not been buildable since slice 7.** `apps/server/Dockerfile` was
+  written in slice 1 and copies `packages/shared` only; `packages/games` arrived six slices later
+  and tsup lists it in `noExternal`, so the build would fail on a missing workspace. Fixed here
+  because Phaser made it worth checking that the browser-only peers stay *out* of the server image —
+  they do: the server imports `@rasmalai/games/server`, which reaches no renderer, and an optional
+  peer nobody imports is one npm is happy to leave out.
+
+**The `export *` collision predicted in `index.ts` finally happened.** Memory's board is `COLUMNS` ×
+`ROWS` and so is Four in a Row's. The comment said the fix was to prefix the newer one, and it was —
+every game added in this slice re-exports explicitly under its own prefix, while the two that
+predate the collision keep `export *` because renaming their constants would touch working code for
+no benefit. Nothing outside `packages/games` imports these constants at all.
+
+**Known limitation 25 is resolved.** D-1 puts the minimum tournament at three games and the
+catalogue had two, so the create screen could not reach a legal selection. Six games, four
+categories, and `catalogue.test.ts` asserts the floor so it cannot quietly go back under.
 
 ---
 
@@ -374,6 +497,20 @@ Slice 8 adds the half that outlives the evening:
 - The session registry gained a `matchKey` and four calls. Everything else about it is unchanged:
   the clocks, the presence rules and the leave protocol were not touched.
 
+Slice 10 adds four games and nothing else to the backend:
+
+- **`packages/games/src/{memory,guess-my-answer,bomb-defusal,reflex}`** — a folder each, registered
+  in three lines apiece. `sessionRegistry`, `matchRunner`, `socketRegistry` and every route are
+  untouched.
+- **`GameMeta.formatScore`** — the only change to the contract, and an optional one. It returns a
+  string or null, and `formatGameScore(slug, score)` in the barrel is what the platform calls when
+  it is holding an integer with no units.
+- **`modules/sessions/catalogue.test.ts`** — the module registry and the migrations, held against
+  each other in both directions. It reads the SQL as text, which is the only copy of the catalogue
+  available without a database.
+- One platform correction: `resultView` no longer calls both players the loser of a game that had
+  no winner to name.
+
 ### Database
 
 `public.users` (including a required `gender`), `public.couples` and `public.pairing_requests`. Everything is keyed to
@@ -416,6 +553,19 @@ comments; the write path was the only thing missing, and it turned out to need n
 into. The one thing worth knowing is that `matches_finished_has_ended_at` means every row that stops
 being `active` must be given an `ended_at` in the same statement, including the ones the orphan
 sweep closes.
+
+`0009_slice_10_games.sql` is two `update` statements: one flipping `enabled` for the four new games,
+one moving `memory.scoring_kind` from `casual` to `competitive`. Four games at once, and still no
+table, no column and no index — the fourth slice in a row where adding games needed nothing from the
+schema.
+
+The second statement is the interesting one. `0004` seeded every game with `scoring_kind = category`,
+which was right with no modules written: nothing had a scoreline yet to be wrong about. Memory has
+one, and the two columns exist separately for exactly this — `category` is where the catalogue
+shelves a game, `scoring_kind` is what a result of it counts towards. It has to move in the database
+as well as in `meta.ts` because the two are read by different halves of the product: the session
+registry reads the module to decide what the results screen says, the statistics read the column to
+decide what gets recorded. `catalogue.test.ts` is what stops them drifting again.
 
 `0007_four_in_a_row.sql` is a single `update` flipping `games.enabled` for `four-in-a-row`. That is
 the entire database footprint of a second game: the catalogue row has existed since `0004`, and
@@ -497,6 +647,19 @@ couple sends you to `/pairing`, and a couple sends you to `/dashboard`. `/games`
 same way — it carries the couple's own record against each game, so it is couple-scoped data and
 not reachable a step earlier than the dashboard is.
 
+Slice 10 changed **three lines of the web app** for four games — the catalogue card now asks the
+game module how to spell a best score, and that is all. `GameMount` resolved four new renderers by
+slug without being edited, and `gameGlyphs.ts` already carried a glyph for every seeded game.
+
+The two things it did add are both deferred items rather than games:
+
+- **The counter-proposal picker.** "Something else instead" opens a row of chips in the invitation
+  sheet and in the takeover; picking one declines and re-invites in a single call. Its open state is
+  keyed to the invitation's id rather than a boolean, so a picker cannot outlive the invitation it
+  is countering.
+- **Phaser**, as an optional peer of `packages/games` and a real dependency of `apps/web` — the same
+  arrangement `react` already had there, and the reason the server image does not install it.
+
 The entire visual identity is `apps/web/src/design-system/theme.css`. Swap that file to reskin.
 
 One correction to that file, found while measuring the game's own transition: the motion tokens were
@@ -510,6 +673,51 @@ looked like it was in charge. Renamed; `duration-quick` and `duration-soft` now 
 ## Verified, with evidence
 
 Not "it compiles" — these were actually run.
+
+Slice 10's evidence is thinner than earlier slices' and worth being plain about: there was no
+database and no browser available, so what follows is unit coverage, the compiler, and the built
+output — not two people playing. Limitations 28–32 say what that leaves.
+
+- **105 new rulebook checks** across the four games, all against the real rules with no timers and
+  no sockets:
+  - Memory's layout is **never** in a frame the reader has not earned — checked on a board with a
+    card turned over, a pair already claimed and a mismatch showing at once, from both seats, and
+    checked that the one moment the whole deck is legitimately public is the moment every card has
+    been claimed;
+  - a matched pair buys another go, a mismatch passes the turn only when the cards actually turn
+    back, and a third card cannot be turned over during somebody else's peek;
+  - Memory's pause **keeps the two cards showing** and gives the whole peek back on resume, which is
+    the opposite of what every other game's pause does and the reason it is written down;
+  - Guess My Answer tells your partner **that** you have answered and nothing about what;
+    `turnOf` names nobody while both are still deciding and the straggler once one is in; the roles
+    alternate so each of them answers three and guesses three; and the last reveal ends the match
+    rather than asking them to tap past it;
+  - Bomb Defusal's expert sees **six wires and not one colour**, the defuser sees all six and
+    **no manual**, neither can play the other's half, and the whole thing swaps when the roles do;
+  - every branch of the manual is checked against hand-built wires, and every one of 1,024 boards is
+    checked to produce a wire that is actually on the bomb;
+  - Reflex judges a hazard from where the player **was when it landed**, counts a dodge whose frame
+    arrived late but whose timing beat it, and refuses to let a late frame resurrect somebody
+    already judged;
+  - Reflex's clock stops on a disconnect and resumes with exactly what was left — three seconds
+    remaining comes back as three seconds, not five and not overdue;
+  - both Reflex runners get the identical schedule, every wave leaves at least one lane open across
+    five different seeds, and the run tightens monotonically to its floor.
+- **The catalogue and the module registry agree**, in both directions, checked against the migration
+  SQL: every module has a seeded and enabled row, every enabled row has a module, and each game's
+  `scoringKind`, `category` and `renderer` match the catalogue's. The guard was mutation-checked —
+  removing `0009`'s Memory line makes it fail with `memory scoring_kind: expected 'casual' to be
+  'competitive'`, which is the exact silent bug it exists for.
+- **No rulebook reaches the browser.** The production client bundles were grepped for Bomb Defusal's
+  manual text (`cut the SECOND wire`), Four in a Row's turn refusal, and three server-only function
+  names. None appears in any chunk. The manual is the one that matters: a defuser who can read it
+  defuses the bomb alone.
+- **Phaser is 1.2MB and it is lazy.** In the built output it sits in a single chunk reached only
+  through the game loader; none of the four root chunks references it, so a dashboard visitor never
+  downloads it.
+- Typecheck, lint, **557 tests** and both production builds green. The web build needs the
+  `NEXT_PUBLIC_SUPABASE_*` values, which were supplied as throwaway strings for the check rather
+  than written to a `.env`.
 
 - **78 statistics checks against real Postgres**, with two throwaway Supabase accounts created,
   paired and deleted by the run itself, playing real Four in a Row matches through the real session
@@ -717,21 +925,30 @@ Not "it compiles" — these were actually run.
    couple's totals one behind with only a log line to say so. Deliberate — the alternative is making
    two people mid-game wait on Postgres — and the row is still there to notice, because the match
    itself was inserted when it started.
-7. **Two of the seventeen games exist.** Reaction Speed and Four in a Row, which between them cover
-   both shapes the contract was designed for — timed and turn-based, secret and open, clock-driven
-   and player-driven. The remaining fifteen are slice 10+. Nothing about the two that exist suggests
-   a third needs a platform change, but that is now an expectation rather than a hope.
+7. **Resolved in slice 10 as far as it goes: six of the seventeen games exist**, across all four
+   categories and both renderers, and the platform did not move for any of the four added. What
+   replaces this limitation is narrower: **eleven games remain**, and the eleventh will be the first
+   to be added to a contract that has now been asked for every shape it was designed for — server
+   secrets, simultaneous secret choices, asymmetric views, continuous motion, and all four meanings
+   of `pause`. Nothing left on the list obviously needs a fifth.
 8. **The reconnect window expiring was verified with fake timers, not in a live browser.** The unit
    tests cover the transition — window expires, both told, session abandoned and forgotten, couple
    free to start again — and the end-to-end run covers the pause and the recovery inside the window,
    but waiting out a real 120 seconds was not done by hand.
-9. **Counter-proposals have no UI yet.** The server, the protocol and the transaction are done and
-   verified, and now that a second game exists there is finally something to counter *with* — the
-   reason the picker was deferred no longer holds. It is a small piece of the invitation sheet:
-   decline, pick another game, send. Worth doing whenever the games list is next touched.
-10. **Score units are not modelled.** A per-game best score renders as a bare number, which is right
-   for points and wrong for a duration. The game module that first needs it should declare its own
-   formatter rather than the platform guessing.
+9. **Resolved in slice 10: counter-proposals have a UI.** "Something else instead" opens a row of
+   chips in the invitation sheet and in the ten-second takeover, one per playable game, and picking
+   one declines and re-invites in the transaction the server has had since slice 6. What replaces
+   this limitation is small: the chips come from `GAME_META` rather than from the catalogue the
+   server actually checks, because this component sits in the layout and should not start a request
+   to draw three buttons. The two agree by construction and `catalogue.test.ts` holds them to it; a
+   drift would show as a chip that comes back with a 409 rather than a game.
+10. **Resolved in slice 10: score units are the game's to declare.** `GameMeta.formatScore` returns
+   a string, or **null** for a score that means nothing on its own. Reflex is why it exists — its
+   score is a duration in milliseconds — and Four in a Row is why it can return null. What replaces
+   this limitation: only the catalogue card asks. `matches.score_a` and the seven-day history still
+   render bare integers, which is correct today because every competitive game so far counts
+   something, and will stop being correct the first time a *second* duration-scored game appears in
+   a list beside a count.
 11. **Resolved in slice 8: a finished match is written down**, together with every aggregate it
    feeds. The earlier end-to-end runs asserted the row count was zero, so this landing broke those
    two assertions loudly rather than letting the boundary drift, which is what they were for.
@@ -798,12 +1015,9 @@ Not "it compiles" — these were actually run.
    after finishing a game in a browser. It shares this with slice 7c, and the two are the same
    sitting: two Google accounts, two browser profiles, one evening.
 
-25. **A tournament cannot actually be started yet — only two games have modules.** D-1 sets the
-   minimum at three, and the catalogue currently enables `reaction-speed` and `four-in-a-row`. The
-   whole slice is proved end to end against real Postgres (the drill temporarily enabled a third,
-   non-competitive game so the unscored path was exercised for real, then switched it back), but
-   the couple cannot use the feature until slice 10 ships a third game. Nothing is broken; the
-   create screen simply cannot reach three selections.
+25. **Resolved in slice 10: six games have modules**, so the create screen can reach D-1's minimum
+   of three and the couple can actually start a tournament. `catalogue.test.ts` asserts the floor so
+   it cannot quietly go back under. Still unproved by hand — see limitation 31.
 26. **Slice 9 has not been through a two-account browser run.** The sequencing is covered
    deterministically, the routes are covered for status codes and who gets told, and the repository
    was run through create → advance → complete → pause → resume → expire → sweep against the real
@@ -814,6 +1028,56 @@ Not "it compiles" — these were actually run.
    series with restarts has more match rows than games. `tournament_games.match_id` resolves to the
    latest attempt, and `matches.tournament_id` is the authoritative link in the direction reads
    actually want.
+
+28. **`0009` has been written but not applied.** There is no database reachable from the machine
+   this slice was written on, so the migration has not run and the four new games are `enabled` in
+   a file rather than in Postgres. Until it is applied the catalogue shows them as "soon" and the
+   server refuses an invitation to them, which is the correct failure — `games.enabled` gating the
+   invitation is exactly what stops a Play button opening a lobby that cannot start. Run
+   `npm run db:migrate`.
+
+29. **None of the four new games has been played by two people.** Every rulebook has full unit
+   coverage — 105 new checks across the four, including the secrecy of Memory's layout, the fork in
+   Bomb Defusal's views, and Reflex's grace window and paused clock — and the built bundles were
+   grepped to confirm no rulebook or manual text reaches the browser. What has *not* happened is the
+   thing every earlier game got: two sockets against a real registry, and two browser profiles. In
+   particular nothing has exercised these four through `sessionRegistry` at all, so the paths that
+   are the platform's rather than the game's — `pause`/`resume` being called on a real disconnect,
+   the move clock reading `turnOf`, `matchRecorder` writing a `memory` result as competitive — are
+   covered by the platform's own tests with other games and by inference here.
+
+30. **Reflex's canvas has never been rendered.** The scene compiles, Phaser resolves, the chunk is
+   confirmed lazy, and the rules it draws are fully tested — but nobody has watched a hazard fall.
+   The parts with no coverage at all are the ones only a browser can answer: whether the lanes are
+   wide enough for a thumb on a phone, whether 150ms between steps feels tight or unfair, and
+   whether the difficulty curve produces a thirty-second game or a five-second one. Those are
+   playtesting questions, and the numbers are all constants at the top of `reflex/protocol.ts` for
+   that reason.
+
+31. **A tournament still has not been played.** The blocker (limitation 25) is gone, but slice 9's
+   own outstanding browser run now has six games to choose from rather than none. It joins slices
+   7c, 8 and 10 in the same sitting: two Google accounts, two browser profiles, one evening.
+
+32. **The Docker image fix has not been rebuilt.** `apps/server/Dockerfile` now copies
+   `packages/games`, which is what it needed to build at all since slice 7 — but Docker was not
+   available on the machine, so the corrected file has not been through `npm run docker:server:build`.
+   The claim under "Verified, with evidence" that the image builds dates from slice 1 and has been
+   stale ever since.
+
+33. **Reflex sends its whole schedule in every frame.** Forty-five hazards is about 1.5KB, and a
+   session frame goes out on every move — up to about seven a second per player under the cooldown.
+   Roughly 65KB/s for a couple mid-run, and about a megabyte over a thirty-second match. Deliberate:
+   the schedule never changes, so the alternative is either a windowed slice the client can run out
+   of between moves, or caching it separately from the session view — and "every frame carries the
+   whole thing rather than a patch" is a platform rule worth more than the bandwidth. Revisit if
+   anybody ever plays this on a metered connection.
+
+33. **A cooperative loss reads as "Played together 💞".** P-3 gives a non-competitive match no
+   winner, so the results banner says the same friendly thing whether the bomb was defused or went
+   off. The game's own view stays on screen underneath and says BOOM, so nothing is actually
+   misreported — but the banner is the biggest thing on the screen and it is the least informative.
+   Fixing it means a shared outcome on `MatchResultView`, which is a platform change for one
+   sentence and was not worth making blind.
 
 ---
 

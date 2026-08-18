@@ -1,3 +1,4 @@
+import { formatGameScore } from '@rasmalai/games';
 import { GAME_CATEGORIES, type CatalogueGame } from '@rasmalai/shared';
 import { Card } from '@/design-system/Card';
 import { CATEGORY_LABEL, gameGlyph } from './gameGlyphs';
@@ -13,6 +14,9 @@ import { InviteButton } from './InviteButton';
  */
 function GameRow({ game }: { game: CatalogueGame }) {
   const played = game.plays > 0;
+  // The number is the platform's; the units are the game's. A game that says its score reads as
+  // nothing gets no line here rather than a bare integer nobody can interpret.
+  const best = game.yourBestScore === null ? null : formatGameScore(game.slug, game.yourBestScore);
 
   return (
     <li
@@ -43,8 +47,9 @@ function GameRow({ game }: { game: CatalogueGame }) {
             {game.plays} {game.plays === 1 ? 'play' : 'plays'} · {game.yourWins}–{game.partnerWins}
             {game.draws > 0 && ` · ${game.draws} drawn`}
             {/* Best score is per game on purpose: a basketball 34 and a five-round win are not
-                the same kind of number, and one global "best score" would compare them. */}
-            {game.yourBestScore !== null && ` · best ${game.yourBestScore}`}
+                the same kind of number, and one global "best score" would compare them. The game
+                module spells it, because the platform is holding an integer with no units. */}
+            {best !== null && ` · best ${best}`}
           </p>
         )}
       </div>

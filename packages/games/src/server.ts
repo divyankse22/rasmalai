@@ -7,12 +7,20 @@
  */
 
 import type { AnyGameRules } from './contract';
+import { rules as bombDefusal } from './bomb-defusal/server';
 import { rules as fourInARow } from './four-in-a-row/server';
+import { rules as guessMyAnswer } from './guess-my-answer/server';
+import { rules as memory } from './memory/server';
 import { rules as reactionSpeed } from './reaction-speed/server';
+import { rules as reflex } from './reflex/server';
 
 const REGISTRY: Readonly<Record<string, AnyGameRules>> = {
   [reactionSpeed.meta.slug]: reactionSpeed,
   [fourInARow.meta.slug]: fourInARow,
+  [memory.meta.slug]: memory,
+  [guessMyAnswer.meta.slug]: guessMyAnswer,
+  [bombDefusal.meta.slug]: bombDefusal,
+  [reflex.meta.slug]: reflex,
 };
 
 /**

@@ -18,4 +18,7 @@ export const meta: GameMeta = {
   // The whole game is one big target. It works the same held either way up.
   orientation: 'any',
   inputs: ['tap', 'keyboard', 'pointer'],
+  // The score is rounds won out of five, not a reaction time — the fastest thumb is the lowest
+  // number, and `GameResult.scores` only ever counts upwards.
+  formatScore: (score) => `${score} ${score === 1 ? 'round' : 'rounds'}`,
 };

@@ -8,24 +8,109 @@
 
 export * from './contract';
 
-// One flat namespace shared by every game's protocol. It holds while no two games name a constant
-// the same way; the day two do, `export *` quietly drops the name and every consumer of it stops
-// compiling — loud enough to be a warning rather than a bug, and the fix is to prefix the newer one.
+// One flat namespace shared by every game's protocol. The comment that used to sit here said it
+// held only while no two games named a constant the same way, and that the day two did, the fix was
+// to prefix the newer one. Memory's board is `COLUMNS` × `ROWS` and so is Four in a Row's, so that
+// day is this one — and it failed exactly as advertised, at the compiler rather than at runtime.
+//
+// Every game added from here re-exports **explicitly**, under its own prefix. `export *` is kept for
+// the two that predate the collision because renaming their constants would touch working code for
+// no benefit; a game's own folder still uses the short names internally, and only the barrel spells
+// them out. Nothing outside `packages/games` imports these constants at all — the renderers live in
+// the package with the rules — so this list is a courtesy rather than an interface.
 export { meta as reactionSpeedMeta } from './reaction-speed/meta';
 export * from './reaction-speed/protocol';
 export { meta as fourInARowMeta } from './four-in-a-row/meta';
 export * from './four-in-a-row/protocol';
 
+export { meta as memoryMeta } from './memory/meta';
+export {
+  COLUMNS as MEMORY_COLUMNS,
+  ROWS as MEMORY_ROWS,
+  CARDS as MEMORY_CARDS,
+  PAIRS as MEMORY_PAIRS,
+  PEEK_MS as MEMORY_PEEK_MS,
+  FACES as MEMORY_FACES,
+} from './memory/protocol';
+export type { MemoryAction, MemoryCard, MemoryView, FlipAction } from './memory/protocol';
+
+export { meta as guessMyAnswerMeta } from './guess-my-answer/meta';
+export {
+  ROUNDS as GUESS_MY_ANSWER_ROUNDS,
+  OPTIONS as GUESS_MY_ANSWER_OPTIONS,
+  QUESTIONS as GUESS_MY_ANSWER_QUESTIONS,
+} from './guess-my-answer/protocol';
+export type {
+  ChooseAction,
+  GuessMyAnswerAction,
+  GuessMyAnswerView,
+  NextAction,
+  Question,
+  Role,
+  RoundRecap,
+} from './guess-my-answer/protocol';
+
+export { meta as bombDefusalMeta } from './bomb-defusal/meta';
+export {
+  WIRES as BOMB_WIRES,
+  STAGES as BOMB_STAGES,
+  MAX_STRIKES as BOMB_MAX_STRIKES,
+  FUSE_MS as BOMB_FUSE_MS,
+  COLOURS as BOMB_COLOURS,
+} from './bomb-defusal/protocol';
+export type {
+  BombDefusalAction,
+  BombDefusalView,
+  Colour,
+  CutAction,
+  PointAction,
+  ReportAction,
+  WireView,
+} from './bomb-defusal/protocol';
+
+export { meta as reflexMeta } from './reflex/meta';
+export {
+  LANES as REFLEX_LANES,
+  WAVES as REFLEX_WAVES,
+  START_LANE as REFLEX_START_LANE,
+  LEAD_IN_MS as REFLEX_LEAD_IN_MS,
+  MOVE_COOLDOWN_MS as REFLEX_MOVE_COOLDOWN_MS,
+  GRACE_MS as REFLEX_GRACE_MS,
+} from './reflex/protocol';
+export type { MoveAction, ReflexAction, ReflexView, Runner, Wave } from './reflex/protocol';
+
 import type { GameMeta } from './contract';
+import { meta as bombDefusal } from './bomb-defusal/meta';
 import { meta as fourInARow } from './four-in-a-row/meta';
+import { meta as guessMyAnswer } from './guess-my-answer/meta';
+import { meta as memory } from './memory/meta';
+import { meta as reflex } from './reflex/meta';
 import { meta as reactionSpeed } from './reaction-speed/meta';
 
 /** Every game that has a module behind it, keyed by the slug in `public.games`. */
 export const GAME_META: Readonly<Record<string, GameMeta>> = {
   [reactionSpeed.slug]: reactionSpeed,
   [fourInARow.slug]: fourInARow,
+  [memory.slug]: memory,
+  [guessMyAnswer.slug]: guessMyAnswer,
+  [bombDefusal.slug]: bombDefusal,
+  [reflex.slug]: reflex,
 };
 
 export function findGameMeta(slug: string): GameMeta | null {
   return GAME_META[slug] ?? null;
+}
+
+/**
+ * One of a game's scores, spelled the way that game spells it — or null when it should not be shown.
+ *
+ * The platform holds `matches.score_a` and `couple_game_stats.user_a_best_score` as bare integers
+ * and has no way to know whether a 14200 is points, milliseconds or cards. Rather than guess, it
+ * asks; a game with nothing to say gets the plain number back, and a game that says the number is
+ * meaningless gets to have it left off the screen entirely.
+ */
+export function formatGameScore(slug: string, score: number): string | null {
+  const game = GAME_META[slug];
+  if (!game) return String(score);
+  return game.formatScore ? game.formatScore(score) : String(score);
 }
