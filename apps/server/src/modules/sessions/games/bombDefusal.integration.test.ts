@@ -130,6 +130,67 @@ describe.skipIf(env === null)('bomb defusal, through the real registry', () => {
     expect(JSON.stringify(defuser)).not.toContain(manualPhrase);
   });
 
+  /** Locks in the defuser's report of one wire's colour. Defuser-only. */
+  function report(sessionId: string, userId: string, wire: number): void {
+    ctx.sessions.submitAction(
+      sessionId,
+      userId,
+      { type: 'report', wire },
+      { receivedAt: Date.now(), compensationMs: 0 },
+    );
+  }
+
+  /** The expert pointing at a wire. Expert-only. */
+  function point(sessionId: string, userId: string, wire: number): void {
+    ctx.sessions.submitAction(
+      sessionId,
+      userId,
+      { type: 'point', wire },
+      { receivedAt: Date.now(), compensationMs: 0 },
+    );
+  }
+
+  it('enforces the defuser/expert split through the real registry, and lets the right role move it', async () => {
+    const sessionId = await startMatch();
+
+    // Resolved from the view, not assumed — the initial defuser is an unseedable coin flip
+    // (`GameContext.random` is not exposed through `IntegrationContext`, confirmed in Task 4).
+    const alice = bombView(sessionId, ctx.alice.id);
+    const [defuserId, expertId] =
+      alice.role === 'defuser' ? [ctx.alice.id, ctx.bob.id] : [ctx.bob.id, ctx.alice.id];
+
+    // The expert's only verb, tried by the defuser through `ctx.sessions.submitAction` — the real
+    // `userId → seat` resolution in `sessionRegistry.ts`, not `rules.validateAction` called
+    // directly against a `PlayerIndex` the way the rulebook's own 30 unit tests do.
+    expect(() => point(sessionId, defuserId, 0)).toThrow(
+      expect.objectContaining({
+        code: 'invalid_action',
+        message: 'You are holding the bomb, not the manual.',
+      }),
+    );
+
+    // The defuser's verb, tried by the expert: refused the other way, through the same real path.
+    expect(() => report(sessionId, expertId, 0)).toThrow(
+      expect.objectContaining({
+        code: 'invalid_action',
+        message: 'You are holding the manual, not the bomb.',
+      }),
+    );
+
+    // Refusing everyone proves nothing on its own. The same two actions from the *right* role must
+    // actually reach the rulebook and move the authoritative state — not merely fail to throw.
+    point(sessionId, expertId, 3);
+    expect(bombView(sessionId, defuserId).pointedAt).toBe(3);
+    expect(bombView(sessionId, expertId).pointedAt).toBe(3);
+
+    expect(bombView(sessionId, expertId).wires[2]!.colour).toBeNull();
+    report(sessionId, defuserId, 2);
+    const defuserWire = bombView(sessionId, defuserId).wires[2]!;
+    const expertWire = bombView(sessionId, expertId).wires[2]!;
+    expect(expertWire.reported).toBe(true);
+    expect(expertWire.colour).toBe(defuserWire.colour);
+  });
+
   it('freezes the fuse across a real disconnect and gives it back intact', async () => {
     const sessionId = await startMatch();
 
