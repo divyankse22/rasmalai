@@ -20,6 +20,7 @@
     "lint": "eslint . && npm run lint -w @rasmalai/web",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:migrate": "npm run db:migrate -w @rasmalai/server",
