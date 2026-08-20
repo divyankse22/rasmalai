@@ -228,3 +228,46 @@ describe('pausing', () => {
     expect(match.complete).toBe(true);
   });
 });
+
+describe('the default clock', () => {
+  /**
+   * Slice-11 amendment (fix 1): `now` used to default to `Date.now` itself — a *reference*,
+   * resolved once, the moment `startMatch` is called. `createIntegrationContext()` builds the
+   * session registry that calls `startMatch` before `vi.useFakeTimers()` runs in every integration
+   * test, so that reference stayed pinned to the real clock forever, while `vi.advanceTimersByTime`
+   * moved a *different* clock this code never looked at again — and a game's timer never fired.
+   *
+   * Reproduced here without a whole integration harness: `Date.now` is stood in for only across the
+   * `startMatch` call, then restored before anything is exercised. `setTimeout` is the fake one for
+   * the whole test either way (this file's `beforeEach` installs it before every test), so swapping
+   * only `Date.now` isolates its identity as the one variable under test. A lazy `() => Date.now()`
+   * default picks the restored clock straight back up; a captured `Date.now` reference does not,
+   * and the round the tick is meant to start never starts.
+   */
+  it('tracks a clock installed after the match was constructed, not the one live when it was built', () => {
+    const fakeClock = Date.now;
+    const frozenAt = fakeClock();
+    Date.now = () => frozenAt;
+
+    const localEvents: { type: string }[] = [];
+    startMatch({
+      rules: tinyRules(),
+      emitter: {
+        emit(type) {
+          localEvents.push({ type });
+        },
+        onComplete() {},
+      },
+    });
+
+    // The clock a real caller sees from here on.
+    Date.now = fakeClock;
+
+    // `tinyRules()` goes live one second after it was built (`liveAt: now + 1_000`) — a lazy default
+    // measures that second on whichever clock is live when it comes due, not the one that was live
+    // when the match was constructed.
+    vi.advanceTimersByTime(1_000);
+
+    expect(localEvents).toEqual([{ type: 'game.round.started' }]);
+  });
+});

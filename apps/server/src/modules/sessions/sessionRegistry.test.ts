@@ -1619,3 +1619,48 @@ describe('writing a match down', () => {
     expect(endings()[0]!.outcome).toEqual({ status: 'abandoned' });
   });
 });
+
+describe('the default clock', () => {
+  /**
+   * Slice-11 amendment (fix 1): `now` used to default to `Date.now` itself — a *reference*,
+   * resolved once, the moment `createSessionRegistry` is called. `createIntegrationContext()`
+   * builds the registry before `vi.useFakeTimers()` runs in every integration test, so that
+   * reference stayed pinned to the real clock forever, while `vi.advanceTimersByTime` moved a
+   * *different* clock the registry never looked at again — and a session's clock never actually
+   * resolved.
+   *
+   * Reproduced here without an integration harness: `Date.now` is stood in for only across the
+   * `createSessionRegistry` call, then restored before anything the registry does is exercised.
+   * `setTimeout` is the fake one for the whole test either way (this file's `beforeEach` installs it
+   * before every test), so swapping only `Date.now` isolates its identity as the one variable under
+   * test. A lazy `() => Date.now()` default picks the restored clock straight back up; a captured
+   * `Date.now` reference does not, and the deadline that should have closed the session never does.
+   */
+  it('tracks a clock installed after the registry was constructed, not the one live when it was built', () => {
+    const fakeClock = Date.now;
+    const frozenAt = fakeClock();
+    Date.now = () => frozenAt;
+
+    const registry = createSessionRegistry({ sendToUser() {} }, { isOnline: () => false });
+
+    // The clock a real caller sees from here on.
+    Date.now = fakeClock;
+
+    registry.create({
+      coupleId: COUPLE,
+      gameSlug: 'reaction-speed',
+      gameName: 'Reaction Speed',
+      players: [
+        { userId: ALICE, nickname: 'Ali', avatarKey: 'fox', gender: 'female' },
+        { userId: BOB, nickname: 'Bo', avatarKey: 'penguin', gender: 'male' },
+      ],
+    });
+
+    // Nobody ever joins, so both of them are on the open session's away clock from the moment it
+    // was created. RECONNECT_WINDOW_MS later, with nobody present, a lazy default gives up on the
+    // session and frees the couple's one slot (ADR-009) rather than holding it forever.
+    vi.advanceTimersByTime(RECONNECT_WINDOW_MS);
+
+    expect(registry.size).toBe(0);
+  });
+});

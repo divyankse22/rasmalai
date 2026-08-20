@@ -337,7 +337,7 @@ export function createSessionRegistry(
   {
     findRules = findGameRules,
     random,
-    now = Date.now,
+    now = () => Date.now(),
     recorder = NULL_MATCH_RECORDER,
     tournaments,
   }: SessionRegistryOptions = {},

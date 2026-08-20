@@ -71,7 +71,7 @@ export function startMatch({
   rules,
   emitter,
   random = cryptoRandom,
-  now = Date.now,
+  now = () => Date.now(),
 }: MatchOptions): RunningMatch {
   const context: GameContext = { random };
 
