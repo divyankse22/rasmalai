@@ -3,6 +3,7 @@ import { ARM_MAX_MS, ARM_MIN_MS, BREATHER_MS, type ReactionSpeedView } from '@ra
 import {
   COUNTDOWN_MS,
   EVENTS,
+  MOVE_WINDOW_MS,
   RECONNECT_WINDOW_MS,
   type SessionView,
   type TournamentView,
@@ -90,12 +91,18 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** Reaction Speed is the game most of this file plays; Four in a Row is the turn-based exception. */
+const GAME_NAMES = {
+  'reaction-speed': 'Reaction Speed',
+  'four-in-a-row': 'Four in a Row',
+} as const;
+
 /** A session for one game of a series, with both of them on its page. */
-function startTournamentSession(): string {
+function startTournamentSession(gameSlug: keyof typeof GAME_NAMES = 'reaction-speed'): string {
   const view = sessions.create({
     coupleId: COUPLE,
-    gameSlug: 'reaction-speed',
-    gameName: 'Reaction Speed',
+    gameSlug,
+    gameName: GAME_NAMES[gameSlug],
     players: [
       { userId: ALICE, nickname: 'Ali', avatarKey: 'fox', gender: 'female' },
       { userId: BOB, nickname: 'Bo', avatarKey: 'penguin', gender: 'male' },
@@ -109,8 +116,8 @@ function startTournamentSession(): string {
   return view.id;
 }
 
-function startPlaying(): string {
-  const id = startTournamentSession();
+function startPlaying(gameSlug: keyof typeof GAME_NAMES = 'reaction-speed'): string {
+  const id = startTournamentSession(gameSlug);
   sessions.setReady(id, ALICE, true);
   sessions.setReady(id, BOB, true);
   vi.advanceTimersByTime(COUNTDOWN_MS);
@@ -292,6 +299,36 @@ describe('a tournament game that never happened', () => {
     expect(ends).toHaveLength(1);
     expect(ends[0]).toMatchObject({ sessionId: view.id, played: false });
     expect(closes).toHaveLength(1);
+  });
+});
+
+describe('a present player who stalls, even in a tournament', () => {
+  it('forfeits a tournament game when a present player just stops moving', () => {
+    const id = startPlaying('four-in-a-row');
+
+    const stalling = sessions.viewFor(id, ALICE).turnUserId!;
+    const waiting = stalling === ALICE ? BOB : ALICE;
+
+    // Nobody disconnects. The player on the move simply never moves.
+    vi.advanceTimersByTime(MOVE_WINDOW_MS + 1);
+
+    expect(sessions.viewFor(id, waiting).result).toMatchObject({ outcome: 'won', byForfeit: true });
+    // A restart would have reported the game as unplayed to the engine.
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({ played: true, winnerUserId: waiting, byForfeit: true });
+  });
+
+  it('still restarts a tournament game when somebody actually drops off', () => {
+    const id = startPlaying('four-in-a-row');
+
+    online.delete(BOB);
+    sessions.handlePresence(BOB, false);
+    vi.advanceTimersByTime(RECONNECT_WINDOW_MS + 1);
+
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({ played: false });
+    // A restart tears the session down rather than leaving a forfeited result on screen.
+    expect(sessions.viewFor.bind(sessions, id, ALICE)).toThrow();
   });
 });
 

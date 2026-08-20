@@ -556,15 +556,6 @@ export function createSessionRegistry(
       return;
     }
 
-    // Tournaments restart the affected game instead of awarding it — one dropped connection must
-    // not hand over points in a standings table (`docs/04` section 6, CLAUDE.md). Slice 9 is what
-    // makes this branch reachable.
-    if (session.mode === 'tournament') {
-      broadcast(session, EVENTS.presence.reconnectWindowExpired);
-      endSession(session, 'abandoned', 'abandoned');
-      return;
-    }
-
     const blamed = PLAYERS.filter((seat) => atFault(session, seat, now()));
     if (blamed.length === 0) {
       // Unreachable: every deadline `nextDeadline` can return belongs to a seat, so something that
@@ -576,6 +567,17 @@ export function createSessionRegistry(
       session.turnSeat = null;
       session.turnDeadline = null;
       syncClocks(session);
+      return;
+    }
+
+    // Tournaments restart a game lost to a dropped connection — one bad wifi moment must not hand
+    // over points in a standings table (`docs/04` section 6). A player who is *present* and simply
+    // stops moving is not that: they forfeit exactly as they would in an individual match. Letting
+    // a restart cover them would mean anybody losing a board could force a replay by sitting on
+    // their turn, which is the one thing the move clock exists to prevent.
+    if (session.mode === 'tournament' && blamed.some((seat) => !isPresent(session.players[seat]))) {
+      broadcast(session, EVENTS.presence.reconnectWindowExpired);
+      endSession(session, 'abandoned', 'abandoned');
       return;
     }
 
