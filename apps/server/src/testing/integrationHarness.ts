@@ -290,10 +290,29 @@ export async function createIntegrationContext(): Promise<IntegrationContext> {
 
   const authIds: string[] = [];
   let disposed = false;
+  // Assigned once the recorder exists, below. `dispose()` closes over this rather than the `const`
+  // it is eventually bound to, because `dispose()` can run from the `catch` at the bottom of this
+  // function before that assignment ever happens - and a reference to a not-yet-initialized `const`
+  // would throw there instead of cleaning anything up.
+  let recorder: MatchRecorder | undefined;
 
   async function dispose(): Promise<void> {
     if (disposed) return;
     disposed = true;
+
+    // A match write can still be queued in the `MatchRecorder` when a test finishes - draining it
+    // first means the throwaway auth users below are never deleted out from under a write still in
+    // flight, which would otherwise surface only as a swallowed foreign-key-violation log line in
+    // whatever test runs next. This is a safety net, not a substitute for the explicit
+    // `await ctx.recorder.drain()` a test still needs before it asserts against `matches`: that one
+    // has to land before the assertion, not merely before teardown.
+    if (recorder) {
+      await recorder.drain().catch(() => {
+        // A rejected drain must not stop the deletions or `pool.end()` below from running. The real
+        // recorder's `drain()` never rejects by design (`matchRecorder.ts` swallows every write
+        // failure into a log line internally) - this does not rely on that holding forever.
+      });
+    }
 
     // R7: delete only the auth users this run created, by id, via the Admin API. Deleting them
     // cascades through public.users and everything keyed to it - never a `delete` against
@@ -347,7 +366,7 @@ export async function createIntegrationContext(): Promise<IntegrationContext> {
     const online = new Set([aliceId, bobId]);
 
     const statistics = createStatisticsRepository(pool);
-    const recorder = createMatchRecorder(statistics);
+    recorder = createMatchRecorder(statistics);
     const sessions = createSessionRegistry(
       {
         sendToUser(userId, type, payload) {
