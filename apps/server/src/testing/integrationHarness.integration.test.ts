@@ -1,10 +1,117 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
+import type { PoolClient } from 'pg';
 import {
   createIntegrationContext,
+  createIntegrationPool,
+  insertSeedUser,
   integrationEnv,
+  PAIRING_CODE_MAX_ATTEMPTS,
   type IntegrationContext,
 } from './integrationHarness';
+
+/**
+ * A collision on `users.pairing_code` (`23505` on the `users_pairing_code_key` constraint), the
+ * only error `insertSeedUser`'s retry loop is meant to catch.
+ */
+function pairingCodeCollision(): Error & { code: string; constraint: string } {
+  const error = new Error(
+    'duplicate key value violates unique constraint "users_pairing_code_key"',
+  ) as Error & { code: string; constraint: string };
+  error.code = '23505';
+  error.constraint = 'users_pairing_code_key';
+  return error;
+}
+
+/** A fake `PoolClient` that records every statement it was asked to run, needing no real DB. */
+function fakeClient(onInsert: () => void): {
+  client: Pick<PoolClient, 'query'>;
+  calls: string[];
+} {
+  const calls: string[] = [];
+  const client: Pick<PoolClient, 'query'> = {
+    query: (async (text: unknown) => {
+      const sql = String(text);
+      calls.push(sql);
+      if (sql.trim().startsWith('insert into public.users')) onInsert();
+      return { rows: [], rowCount: 0 };
+    }) as PoolClient['query'],
+  };
+  return { client, calls };
+}
+
+describe('insertSeedUser retry path (no database required)', () => {
+  it('retries with a fresh pairing code once, then succeeds', async () => {
+    let attempts = 0;
+    const { client, calls } = fakeClient(() => {
+      attempts += 1;
+      if (attempts === 1) throw pairingCodeCollision();
+    });
+
+    const codes = ['AAAAAAAA', 'BBBBBBBB'];
+    let codeIndex = 0;
+
+    await insertSeedUser(
+      client,
+      { id: randomUUID(), nickname: 'retry-once', gender: 'female' },
+      () => codes[codeIndex++]!,
+    );
+
+    expect(attempts).toBe(2);
+    expect(codeIndex).toBe(2);
+    expect(calls).toEqual([
+      'savepoint seed_user_insert',
+      expect.stringContaining('insert into public.users'),
+      'rollback to savepoint seed_user_insert',
+      'savepoint seed_user_insert',
+      expect.stringContaining('insert into public.users'),
+      'release savepoint seed_user_insert',
+    ]);
+  });
+
+  it('gives up and rethrows the collision after exhausting every attempt', async () => {
+    let attempts = 0;
+    const { client } = fakeClient(() => {
+      attempts += 1;
+      throw pairingCodeCollision();
+    });
+
+    await expect(
+      insertSeedUser(
+        client,
+        { id: randomUUID(), nickname: 'retry-exhausted', gender: 'male' },
+        () => 'CCCCCCCC',
+      ),
+    ).rejects.toMatchObject({ code: '23505', constraint: 'users_pairing_code_key' });
+
+    expect(attempts).toBe(PAIRING_CODE_MAX_ATTEMPTS);
+  });
+
+  it('does not retry a collision on a different constraint', async () => {
+    const otherError = new Error('duplicate key value violates unique constraint "users_pkey"') as Error & {
+      code: string;
+      constraint: string;
+    };
+    otherError.code = '23505';
+    otherError.constraint = 'users_pkey';
+
+    let attempts = 0;
+    const { client } = fakeClient(() => {
+      attempts += 1;
+      throw otherError;
+    });
+
+    await expect(
+      insertSeedUser(
+        client,
+        { id: randomUUID(), nickname: 'wrong-constraint', gender: 'female' },
+        () => 'DDDDDDDD',
+      ),
+    ).rejects.toBe(otherError);
+
+    expect(attempts).toBe(1);
+  });
+});
 
 const env = integrationEnv();
 
@@ -56,13 +163,7 @@ describe.skipIf(env === null)('the integration harness', () => {
     const env2 = integrationEnv();
     if (!env2) throw new Error('integration env vanished mid-test');
 
-    const verifyPool = new Pool({
-      connectionString: env2.databaseUrl,
-      ssl: env2.caCertificate
-        ? { ca: env2.caCertificate, rejectUnauthorized: true }
-        : { rejectUnauthorized: true },
-      max: 1,
-    });
+    const verifyPool = createIntegrationPool(env2, { max: 1 });
 
     try {
       const users = await verifyPool.query('select 1 from public.users where id = $1', [
