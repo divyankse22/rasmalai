@@ -58,6 +58,7 @@ function tournamentWith(options: {
     startedAt: new Date(),
     endedAt: null,
     pausedUntil: null,
+    requestExpiresAt: null,
     totalPointsA: options.pointsA ?? 0,
     totalPointsB: options.pointsB ?? 0,
     winnerUserId: options.winnerUserId ?? null,
@@ -117,6 +118,10 @@ beforeEach(() => {
     createTournament: () => Promise.resolve(nextRead),
     getActiveTournament: () => Promise.resolve(nextRead),
     getTournament: () => Promise.resolve(nextRead),
+    respondToTournamentRequest: () =>
+      Promise.resolve({ tournament: nextRead, otherUserId: USER_B }),
+    cancelTournamentRequest: () => Promise.resolve({ tournament: nextRead, otherUserId: USER_B }),
+    sweepExpiredTournamentRequests: () => Promise.resolve([]),
     advanceGame: (_id: string, input: GameResultInput) => {
       advanced.push(input);
       return Promise.resolve(nextAdvance ?? tournamentWith({ played: 1 }));

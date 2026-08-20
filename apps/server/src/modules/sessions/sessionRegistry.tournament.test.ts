@@ -301,12 +301,14 @@ describe('the series on the session view', () => {
       id: TOURNAMENT,
       name: 'Friday night',
       status: 'active',
+      direction: 'outgoing',
       games: [],
       currentPosition: 2,
       yourTotalPoints: 3,
       partnerTotalPoints: 1,
       winner: null,
       pausedUntil: null,
+      expiresAt: null,
     };
 
     const id = startTournamentSession();
@@ -320,12 +322,14 @@ describe('the series on the session view', () => {
       id: TOURNAMENT,
       name: 'Friday night',
       status: 'active',
+      direction: 'outgoing',
       games: [],
       currentPosition: 1,
       yourTotalPoints: 0,
       partnerTotalPoints: 0,
       winner: null,
       pausedUntil: null,
+      expiresAt: null,
     };
 
     const view = sessions.create({

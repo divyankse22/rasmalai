@@ -24,11 +24,13 @@ import {
 } from '../testing';
 
 /**
- * The tournament routes: who may start a series, what they may start, and who is told.
+ * The tournament routes: who may request a series, who may answer one, what they may start, and
+ * who is told.
  *
  * The scoring and the sequencing are somebody else's job — the repository's SQL and the engine's
  * queue, both covered where they live. What is only true here is the gate: paired, nothing else
- * running, a partner who is actually online, a name, and between three and seven games that exist.
+ * running, a partner who is actually online, a name, and between three and seven games that exist —
+ * plus, now, who may answer a request and what each answer does.
  */
 
 let server: Server;
@@ -72,6 +74,17 @@ function request(path: string, init: RequestInit & { token?: string } = {}) {
 const create = (body: unknown = { name: 'Friday night', gameSlugs: THREE_GAMES }, token = 'valid') =>
   request('/api/tournaments', { method: 'POST', token, body: JSON.stringify(body) });
 
+/** Answering a request. The creator is always TEST_USER_ID here, so the default answerer is not. */
+const respond = (accept: boolean, id = TEST_TOURNAMENT_ID, token = 'valid-other') =>
+  request(`/api/tournaments/${id}/respond`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ accept }),
+  });
+
+const cancelRequest = (id = TEST_TOURNAMENT_ID, token = 'valid') =>
+  request(`/api/tournaments/${id}/cancel`, { method: 'POST', token });
+
 beforeEach(async () => {
   tournaments = createStubTournamentRepository();
   realtime = createRecordingNotifier();
@@ -114,18 +127,20 @@ afterEach(async () => {
   await new Promise((resolve) => server.close(resolve));
 });
 
-describe('starting a tournament', () => {
-  it('creates one, opens its first session, and moves both of them into it', async () => {
+describe('requesting a tournament', () => {
+  it('creates a pending request and tells both of them, opening nothing yet', async () => {
     const response = await create();
 
     expect(response.status).toBe(201);
-    const body = (await response.json()) as { tournament: TournamentView; sessionId: string };
-    expect(body.sessionId).toEqual(expect.any(String));
+    const body = (await response.json()) as { tournament: TournamentView };
+    expect(body.tournament.status).toBe('pending');
     expect(tournaments.created).toEqual([{ name: 'Friday night', gameSlugs: THREE_GAMES }]);
 
-    // Both, because a series is not an invitation anybody has to accept — they are already in it.
-    const moved = realtime.recipientsOf(EVENTS.results.tournamentNextGame);
-    expect(new Set(moved)).toEqual(new Set([TEST_USER_ID, OTHER_USER_ID]));
+    // Both, so a second device belonging to either of them stays in step — same reasoning as
+    // `invitation.created`. Nothing moves anybody anywhere: that only happens on an accept.
+    const told = realtime.recipientsOf(EVENTS.tournamentRequest.created);
+    expect(new Set(told)).toEqual(new Set([TEST_USER_ID, OTHER_USER_ID]));
+    expect(realtime.recipientsOf(EVENTS.results.tournamentNextGame)).toHaveLength(0);
   });
 
   it('hands each of them the standings from their own side', async () => {
@@ -136,7 +151,7 @@ describe('starting a tournament', () => {
 
     const frame = realtime.sent.find(
       (event) =>
-        event.type === EVENTS.results.tournamentNextGame && event.userId === OTHER_USER_ID,
+        event.type === EVENTS.tournamentRequest.created && event.userId === OTHER_USER_ID,
     );
     const view = (frame!.payload as { tournament: TournamentView }).tournament;
     // OTHER_USER_ID is user A here, and a fresh series is level, so this is really asserting that
@@ -192,8 +207,10 @@ describe('starting a tournament', () => {
   });
 
   it('refuses one while a game is already going (ADR-009)', async () => {
+    // Nothing is open after a bare create — only an accept opens a session, which is what this
+    // guard actually needs to have something to trip over.
     await create();
-    tournaments.failWith(null);
+    await respond(true);
 
     const response = await create();
 
@@ -229,15 +246,107 @@ describe('starting a tournament', () => {
     expect(response.status).toBe(401);
     expect(tournaments.created).toHaveLength(0);
   });
+});
+
+describe('answering a tournament request', () => {
+  beforeEach(async () => {
+    await create();
+  });
+
+  it('accepts, opens the first session, and moves both of them into it', async () => {
+    const response = await respond(true);
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { accepted: boolean; sessionId: string };
+    expect(body.accepted).toBe(true);
+    expect(body.sessionId).toEqual(expect.any(String));
+
+    const moved = realtime.recipientsOf(EVENTS.results.tournamentNextGame);
+    expect(new Set(moved)).toEqual(new Set([TEST_USER_ID, OTHER_USER_ID]));
+  });
+
+  it('declines and tells both of them, without touching the engine', async () => {
+    const response = await respond(false);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ accepted: false });
+    expect(engine.started).toHaveLength(0);
+
+    const told = realtime.recipientsOf(EVENTS.results.tournamentUpdated);
+    expect(new Set(told)).toEqual(new Set([TEST_USER_ID, OTHER_USER_ID]));
+  });
 
   it('abandons the row when nothing can play it, so the couple is not locked out', async () => {
     engine.failNextStart = true;
 
-    const response = await create();
+    const response = await respond(true);
 
     expect(response.status).toBe(500);
     // The partial unique index would otherwise refuse this couple every future series.
     expect(tournaments.abandoned).toEqual([TEST_TOURNAMENT_ID]);
+  });
+
+  it('passes the creator answering their own request on to the repository, which is what actually refuses it', async () => {
+    tournaments.failWith(new TournamentError('cannot_answer_own', 'You sent this one.'));
+
+    const response = await respond(true, TEST_TOURNAMENT_ID, 'valid');
+
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as ApiError).error.reason).toBe('cannot_answer_own');
+  });
+
+  it('passes an already-answered request on to the repository, which is what actually refuses it', async () => {
+    tournaments.failWith(
+      new TournamentError('tournament_not_pending', 'That was already answered.'),
+    );
+
+    const response = await respond(true);
+
+    expect(response.status).toBe(409);
+    expect(((await response.json()) as ApiError).error.reason).toBe('tournament_not_pending');
+  });
+
+  it('is gone rather than merely refused once its five minutes are up', async () => {
+    tournaments.failWith(new TournamentError('tournament_expired', 'That request ran out.'));
+
+    const response = await respond(true);
+
+    expect(response.status).toBe(410);
+    expect(((await response.json()) as ApiError).error.reason).toBe('tournament_expired');
+  });
+
+  it('turns away anybody who is not signed in', async () => {
+    const response = await request(`/api/tournaments/${TEST_TOURNAMENT_ID}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ accept: true }),
+    });
+
+    expect(response.status).toBe(401);
+  });
+});
+
+describe('withdrawing a tournament request', () => {
+  beforeEach(async () => {
+    await create();
+  });
+
+  it('cancels it and tells both of them', async () => {
+    const response = await cancelRequest();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ cancelled: true });
+    expect(tournaments.cancelled).toEqual([TEST_TOURNAMENT_ID]);
+
+    const told = realtime.recipientsOf(EVENTS.results.tournamentUpdated);
+    expect(new Set(told)).toEqual(new Set([TEST_USER_ID, OTHER_USER_ID]));
+  });
+
+  it('refuses anybody but the creator', async () => {
+    tournaments.failWith(new TournamentError('tournament_not_found', 'That tournament does not exist.'));
+
+    const response = await cancelRequest(TEST_TOURNAMENT_ID, 'valid-other');
+
+    expect(response.status).toBe(404);
   });
 });
 
@@ -251,6 +360,7 @@ describe('reading the active tournament', () => {
 
   it('answers with the series and the session to rejoin', async () => {
     await create();
+    await respond(true);
 
     const response = await request('/api/tournaments/active', { token: 'valid' });
     const body = (await response.json()) as {

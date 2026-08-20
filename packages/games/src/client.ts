@@ -31,6 +31,7 @@ const RENDERERS: Readonly<Record<string, GameLoader>> = {
   'guess-my-answer': () => import('./guess-my-answer/client'),
   'bomb-defusal': () => import('./bomb-defusal/client'),
   reflex: () => import('./reflex/client'),
+  basketball: () => import('./basketball/client'),
 };
 
 export function findGameRenderer(slug: string): GameLoader | null {

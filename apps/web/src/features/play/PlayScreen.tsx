@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   EVENTS,
   REACTIONS,
+  type GameEventPayload,
   type MatchResultView,
   type ProtocolError,
   type Reaction,
@@ -157,6 +158,8 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   const [ended, setEnded] = useState<string | null>(null);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
+  /** The partner's last `game.event`. Opaque to this screen — only the game itself reads it. */
+  const [partnerSignal, setPartnerSignal] = useState<unknown>(null);
 
   const countdown = useCountdown(session?.startsAt ?? null);
   const moveSeconds = useCountdown(session?.turnDeadline ?? null);
@@ -220,6 +223,14 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   const act = useCallback(
     (action: unknown) => {
       send(EVENTS.game.actionRequest, { sessionId, action });
+    },
+    [send, sessionId],
+  );
+
+  /** A game's own ephemeral signal to its partner. Fire-and-forget, unlike `act`. */
+  const sendSignal = useCallback(
+    (signal: unknown) => {
+      send(EVENTS.game.event, { sessionId, event: signal });
     },
     [send, sessionId],
   );
@@ -315,6 +326,14 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
             () => setFloating((current) => current.filter((item) => item.key !== key)),
             REACTION_LIFETIME_MS,
           );
+          return;
+        }
+
+        if (envelope.type === EVENTS.game.event) {
+          const { event, fromUserId } = envelope.payload as GameEventPayload;
+          // The relay sends to both players (same as a reaction); only the partner's copy is worth
+          // keeping here, since the sender's own signal is already whatever local state produced it.
+          if (fromUserId !== session?.you.userId) setPartnerSignal(event);
           return;
         }
 
@@ -437,6 +456,30 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
                 Back to the dashboard
               </Button>
             </div>
+          ) : !tournament && session.partner.ready && !session.you.ready ? (
+            /* They asked first, so this is a response rather than an offer: ✓ is the same ready
+               toggle as always, and ✗ opens the same leave-confirmation card the ghost `Leave`
+               button below does — declining a rematch is exactly that, said with one fewer click
+               to find the button than reading the sentence below and going looking for it. */
+            <div className="mt-2 flex w-full flex-col items-center gap-1">
+              <p className="text-xs text-muted">
+                <PersonName name={session.partner.nickname} gender={session.partner.gender} />{' '}
+                wants a rematch.
+              </p>
+              <div className="flex w-full gap-2">
+                <Button
+                  variant="soft"
+                  className="flex-1"
+                  aria-label="Decline the rematch"
+                  onClick={() => setConfirmingLeave(true)}
+                >
+                  ✗
+                </Button>
+                <Button className="flex-1" aria-label="Accept the rematch" onClick={toggleReady}>
+                  ✓
+                </Button>
+              </div>
+            </div>
           ) : (
             <div className="mt-2 flex w-full flex-col items-center gap-1">
               <Button
@@ -497,6 +540,8 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           you={session.you}
           partner={session.partner}
           act={act}
+          partnerSignal={partnerSignal}
+          sendSignal={sendSignal}
         />
       )}
 

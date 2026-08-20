@@ -14,6 +14,7 @@ import { createMatchRecorder } from './modules/statistics/matchRecorder';
 import { createStatisticsRepository } from './modules/statistics/statisticsRepository';
 import { createTournamentEngine } from './modules/tournaments/tournamentEngine';
 import { createTournamentRepository } from './modules/tournaments/tournamentRepository';
+import { startTournamentRequestSweeper } from './modules/tournaments/tournamentRequestSweeper';
 import { createUsersRepository } from './modules/users/usersRepository';
 import { createNotifier } from './ws/notifier';
 import { attachWebSocketServer } from './ws/server';
@@ -91,6 +92,7 @@ const realtime = attachWebSocketServer(server, {
   },
 });
 const sweeper = startInvitationSweeper(invitations, notifier);
+const tournamentRequestSweeper = startTournamentRequestSweeper(tournaments, notifier);
 const retention = startRetentionJob(statistics, tournaments);
 
 /**
@@ -142,6 +144,7 @@ function shutdown(signal: NodeJS.Signals) {
   // Sessions are memory-only and do not survive this, so both players are told the game is over
   // rather than being left watching a lobby that will never move again.
   sweeper.stop();
+  tournamentRequestSweeper.stop();
   retention.stop();
   // Before the sessions: closing them ends every tournament game mid-flight, and an engine still
   // listening would try to open the next one against a pool that is about to close.

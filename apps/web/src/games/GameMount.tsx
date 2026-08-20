@@ -20,11 +20,15 @@ export function GameMount({
   you,
   partner,
   act,
+  partnerSignal,
+  sendSignal,
 }: {
   snapshot: GameSnapshot;
   you: SessionPlayer;
   partner: SessionPlayer;
   act(action: unknown): void;
+  partnerSignal: unknown;
+  sendSignal(signal: unknown): void;
 }) {
   const Renderer = useMemo(() => {
     const loader = findGameRenderer(snapshot.slug);
@@ -53,7 +57,14 @@ export function GameMount({
         </p>
       }
     >
-      <Renderer view={snapshot.state} you={you} partner={partner} act={act} />
+      <Renderer
+        view={snapshot.state}
+        you={you}
+        partner={partner}
+        act={act}
+        partnerSignal={partnerSignal}
+        sendSignal={sendSignal}
+      />
     </Suspense>
   );
 }

@@ -29,6 +29,9 @@ const reactionFrame = sessionFrame.extend({ reaction: z.enum(REACTIONS) });
 // `action` is deliberately unvalidated here. Its shape belongs to the game module, which validates
 // it before it touches any state; a platform that also had an opinion would need editing per game.
 const actionFrame = sessionFrame.extend({ action: z.unknown() });
+// Same reasoning as `action`, and for the same reason: a game's ephemeral signal is shaped by the
+// game module, not the platform, and never touches state that needs validating.
+const gameEventFrame = sessionFrame.extend({ event: z.unknown() });
 const leaveRespondFrame = sessionFrame.extend({ accept: z.boolean() });
 
 /**
@@ -38,6 +41,12 @@ const leaveRespondFrame = sessionFrame.extend({ accept: z.boolean() });
  */
 const REACTION_LIMIT = 10;
 const ACTION_LIMIT = 30;
+/**
+ * A game's own ephemeral signal is meant to be sent while a player is mid-gesture — basketball
+ * throttles its live aim to one every 90ms — so this ceiling is sized for a continuous drag across
+ * the whole window, not for a handful of taps.
+ */
+const GAME_EVENT_LIMIT = 80;
 const RATE_WINDOW_MS = 5_000;
 
 /** Anything wilder than this is a stalled heartbeat, not a slow connection. */
@@ -75,6 +84,7 @@ interface SocketState {
   halfRttMs: number | null;
   reactions: Meter;
   actions: Meter;
+  gameEvents: Meter;
 }
 
 export interface WebSocketServerOptions {
@@ -269,6 +279,7 @@ export function attachWebSocketServer(
         EVENTS.lobby.leaveRequest,
         EVENTS.lobby.leaveRespond,
         EVENTS.game.actionRequest,
+        EVENTS.game.event,
         EVENTS.reaction.sent,
       ] as string[]
     ).includes(type);
@@ -383,6 +394,20 @@ export function attachWebSocketServer(
           return;
         }
 
+        case EVENTS.game.event: {
+          const frame = gameEventFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+
+          if (exceeds(state.gameEvents, GAME_EVENT_LIMIT, Date.now())) {
+            // Silently dropped rather than an error frame: a throttled drag is not a mistake the
+            // sender needs telling about, only the least recent of a burst that lost a race.
+            return;
+          }
+
+          sessions!.sendGameEvent(frame.data.sessionId, userId, frame.data.event);
+          return;
+        }
+
         default:
           // An unknown frame is an error rather than a silent no-op, so client bugs surface
           // immediately rather than looking like the server ignoring them.
@@ -474,6 +499,7 @@ export function attachWebSocketServer(
       halfRttMs: null,
       reactions: { windowStart: 0, count: 0 },
       actions: { windowStart: 0, count: 0 },
+      gameEvents: { windowStart: 0, count: 0 },
     };
     states.set(socket, state);
 

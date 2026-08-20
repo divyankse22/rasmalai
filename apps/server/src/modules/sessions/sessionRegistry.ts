@@ -309,6 +309,11 @@ export interface SessionRegistry {
   leave(sessionId: string, userId: string): void;
   react(sessionId: string, userId: string, reaction: Reaction): void;
   /**
+   * A game's own ephemeral signal — opaque to the platform, relayed and forgotten exactly like
+   * `react`. Never touches `matches`, a score, or anything `submitAction` governs.
+   */
+  sendGameEvent(sessionId: string, userId: string, event: unknown): void;
+  /**
    * Closes a tournament session from outside, so the couple's one slot (ADR-009) is free before the
    * next game of the series opens in it.
    *
@@ -1178,6 +1183,24 @@ export function createSessionRegistry(
         emitter.sendToUser(target.userId, EVENTS.reaction.sent, {
           reaction,
           // Stamped by the server. A client cannot react as its partner.
+          fromUserId: userId,
+        });
+      }
+    },
+
+    sendGameEvent(sessionId, userId, event) {
+      const session = requireSession(sessionId);
+      seatOf(session, userId);
+
+      // Same shape as `react`: relayed to both and forgotten, never written down. The sender already
+      // holds its own value locally (it is the thing it just sent), so only the partner's copy of
+      // this screen has any use for the echo back — but sending to both keeps this identical to
+      // every other ephemeral relay rather than a special case, and a receiver that does not want
+      // its own signal back is free to drop it by `fromUserId`.
+      for (const target of session.players) {
+        emitter.sendToUser(target.userId, EVENTS.game.event, {
+          event,
+          // Stamped by the server. A client cannot signal as its partner.
           fromUserId: userId,
         });
       }

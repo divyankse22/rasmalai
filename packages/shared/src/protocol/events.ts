@@ -121,6 +121,15 @@ export const EVENTS = {
      */
     tournamentNextGame: 'tournament.next_game',
   },
+  /**
+   * Server → both: a tournament request was just made, the same way `invitation.created` announces
+   * a game invitation. Everything else about answering one — accept, decline, cancel, expire — is
+   * already a `tournament.updated`/`tournament.next_game`, so this is the only event this family
+   * needs: it is the one moment a screen holding nothing has to be told something now exists.
+   */
+  tournamentRequest: {
+    created: 'tournament.request.created',
+  },
   reaction: {
     sent: 'reaction.sent',
   },

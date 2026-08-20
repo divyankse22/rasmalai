@@ -29,12 +29,15 @@ export class TournamentError extends Error {
       | 'tournament_not_found'
       | 'tournament_not_active'
       | 'tournament_not_paused'
+      | 'tournament_not_pending'
       | 'tournament_expired'
       | 'already_has_tournament'
       | 'invalid_game_count'
       | 'duplicate_game'
       | 'game_not_found'
-      | 'game_not_playable',
+      | 'game_not_playable'
+      /** The creator tried to answer their own request — mirrors invitations' identical rule. */
+      | 'cannot_answer_own',
     message: string,
   ) {
     super(message);
@@ -64,6 +67,8 @@ export interface Tournament {
   startedAt: Date | null;
   endedAt: Date | null;
   pausedUntil: Date | null;
+  /** Set while `status` is `pending`; null once the request has been answered, cancelled or expired. */
+  requestExpiresAt: Date | null;
   totalPointsA: number;
   totalPointsB: number;
   winnerUserId: string | null;
@@ -86,7 +91,12 @@ export interface GameResultInput {
 }
 
 export interface TournamentRepository {
-  /** Creates a tournament and its game list. Returns the full tournament. */
+  /**
+   * Creates a tournament **request** and its locked game list, `pending` and unanswered.
+   *
+   * Mirrors `invitations.create`: nothing is `active` yet, and `requestExpiresAt` is five minutes
+   * out. `respondToTournamentRequest` is what actually opens the series.
+   */
   createTournament(input: {
     coupleId: string;
     createdByUserId: string;
@@ -94,11 +104,40 @@ export interface TournamentRepository {
     gameSlugs: string[];
   }): Promise<Tournament>;
 
-  /** The couple's one non-terminal tournament, if any. */
+  /** The couple's one non-terminal tournament (including an unanswered request), if any. */
   getActiveTournament(coupleId: string): Promise<Tournament | null>;
 
   /** A specific tournament, scoped to the couple. */
   getTournament(tournamentId: string, coupleId: string): Promise<Tournament | null>;
+
+  /**
+   * The partner answers a request. Mirrors `invitations.respond`.
+   *
+   * On accept: opens the series — `status` becomes `active` and the first game `active`, exactly
+   * what `createTournament` used to do immediately. On decline: `status` becomes `declined`. Either
+   * way only the partner the request was not sent by may call this — the creator answering their
+   * own request is `cannot_answer_own`, mirroring the invitation rule exactly.
+   */
+  respondToTournamentRequest(
+    tournamentId: string,
+    userId: string,
+    accept: boolean,
+  ): Promise<{ tournament: Tournament; otherUserId: string }>;
+
+  /** The creator withdraws a still-unanswered request. Mirrors `invitations.cancel`. */
+  cancelTournamentRequest(
+    tournamentId: string,
+    userId: string,
+  ): Promise<{ tournament: Tournament; otherUserId: string }>;
+
+  /**
+   * Closes every request whose five minutes are up. Mirrors `invitations.sweepExpired` — returns
+   * enough to build a per-reader view for both partners, not just the ids, because unlike an
+   * abandoned series (silent until the dashboard next asks) a live request is worth an instant push.
+   */
+  sweepExpiredTournamentRequests(): Promise<
+    { tournament: Tournament; userAId: string; userIds: [string, string] }[]
+  >;
 
   /**
    * Marks a game as completed, awards 3/1/0 if scored, updates totals, and checks whether
@@ -148,7 +187,7 @@ export function createTournamentRepository(pool: Pool): TournamentRepository {
     const tResult = await pool.query(
       `select
          t.id, t.couple_id, t.name, t.status, t.created_by_user_id,
-         t.created_at, t.started_at, t.ended_at, t.paused_until,
+         t.created_at, t.started_at, t.ended_at, t.paused_until, t.request_expires_at,
          t.total_points_a, t.total_points_b, t.winner_user_id
        from public.tournaments t
        ${whereClause}`,
@@ -179,6 +218,7 @@ export function createTournamentRepository(pool: Pool): TournamentRepository {
       startedAt: row.started_at,
       endedAt: row.ended_at,
       pausedUntil: row.paused_until,
+      requestExpiresAt: row.request_expires_at,
       totalPointsA: row.total_points_a,
       totalPointsB: row.total_points_b,
       winnerUserId: row.winner_user_id,
@@ -243,24 +283,26 @@ export function createTournamentRepository(pool: Pool): TournamentRepository {
           if (!game.enabled) throw new TournamentError('game_not_playable', `Game "${slug}" is not available yet.`);
         }
 
-        // Insert tournament
+        // Insert the tournament as a request: pending, unstarted, five minutes to answer — the same
+        // shape `invitations.create` inserts. `respondToTournamentRequest` is what opens it.
         const tResult = await client.query(
-          `insert into public.tournaments (couple_id, name, status, created_by_user_id, started_at)
-           values ($1, $2, 'active', $3, now())
+          `insert into public.tournaments
+             (couple_id, name, status, created_by_user_id, request_expires_at)
+           values ($1, $2, 'pending', $3, now() + interval '5 minutes')
            returning id`,
           [coupleId, name, createdByUserId],
         );
         const tournamentId = tResult.rows[0].id as string;
 
-        // Insert tournament games in order
+        // Insert tournament games in order. All `pending` — nothing opens until the request is
+        // accepted, unlike the old instant-start insert which activated the first one here.
         for (let i = 0; i < gameSlugs.length; i++) {
           const slug = gameSlugs[i]!;
           const game = gamesBySlug.get(slug)!;
-          const status = i === 0 ? 'active' : 'pending';
           await client.query(
             `insert into public.tournament_games (tournament_id, game_id, position, scored, status)
-             values ($1, $2, $3, $4, $5)`,
-            [tournamentId, game.id, i + 1, game.scoringKind === 'competitive', status],
+             values ($1, $2, $3, $4, 'pending')`,
+            [tournamentId, game.id, i + 1, game.scoringKind === 'competitive'],
           );
         }
 
@@ -306,6 +348,159 @@ export function createTournamentRepository(pool: Pool): TournamentRepository {
 
     async getTournament(tournamentId, coupleId) {
       return loadTournament(tournamentId, coupleId);
+    },
+
+    async respondToTournamentRequest(tournamentId, userId, accept) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+
+        const found = await client.query<{
+          couple_id: string;
+          created_by_user_id: string;
+          status: string;
+          expired: boolean;
+          user_a_id: string;
+          user_b_id: string;
+        }>(
+          `select t.couple_id, t.created_by_user_id, t.status,
+                  (t.request_expires_at <= now()) as expired,
+                  c.user_a_id, c.user_b_id
+             from public.tournaments t
+             join public.couples c on c.id = t.couple_id
+            where t.id = $1 for update of t`,
+          [tournamentId],
+        );
+
+        const row = found.rows[0];
+        // A wrong couple reads as "not found", same reasoning as invitations: no confirming to a
+        // stranger that a row exists.
+        if (!row || (row.user_a_id !== userId && row.user_b_id !== userId)) {
+          throw new TournamentError('tournament_not_found', 'That tournament does not exist.');
+        }
+        if (row.created_by_user_id === userId) {
+          throw new TournamentError('cannot_answer_own', 'You sent this one — they answer it.');
+        }
+        if (row.status !== 'pending') {
+          throw new TournamentError('tournament_not_pending', 'That was already answered.');
+        }
+        if (row.expired) {
+          // Close it properly on the way past, so the row stops claiming to be pending — the same
+          // lazy-expiry handling `invitations.respond` does.
+          await client.query(
+            `update public.tournaments set status = 'expired', ended_at = now() where id = $1`,
+            [tournamentId],
+          );
+          await client.query('commit');
+          throw new TournamentError('tournament_expired', 'That request ran out.');
+        }
+
+        const otherUserId = row.user_a_id === userId ? row.user_b_id : row.user_a_id;
+
+        if (accept) {
+          await client.query(
+            `update public.tournaments
+             set status = 'active', started_at = now(), request_expires_at = null
+             where id = $1`,
+            [tournamentId],
+          );
+          // The line `createTournament` used to run at insert time, now run here instead: nothing
+          // opens until the request is actually accepted.
+          await client.query(
+            `update public.tournament_games
+             set status = 'active'
+             where tournament_id = $1 and position = 1`,
+            [tournamentId],
+          );
+        } else {
+          await client.query(
+            `update public.tournaments set status = 'declined', ended_at = now() where id = $1`,
+            [tournamentId],
+          );
+        }
+
+        await client.query('commit');
+
+        const tournament = await loadTournament(tournamentId);
+        if (!tournament) throw new Error('tournament vanished immediately after response');
+        return { tournament, otherUserId };
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async cancelTournamentRequest(tournamentId, userId) {
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+
+        const found = await client.query<{
+          created_by_user_id: string;
+          status: string;
+          user_a_id: string;
+          user_b_id: string;
+        }>(
+          `select t.created_by_user_id, t.status, c.user_a_id, c.user_b_id
+             from public.tournaments t
+             join public.couples c on c.id = t.couple_id
+            where t.id = $1 for update of t`,
+          [tournamentId],
+        );
+
+        const row = found.rows[0];
+        if (!row || row.created_by_user_id !== userId) {
+          // Not yours to withdraw reads the same as not existing, same as `invitations.cancel`.
+          throw new TournamentError('tournament_not_found', 'That tournament does not exist.');
+        }
+        if (row.status !== 'pending') {
+          throw new TournamentError('tournament_not_pending', 'That was already answered.');
+        }
+
+        await client.query(
+          `update public.tournaments set status = 'cancelled', ended_at = now() where id = $1`,
+          [tournamentId],
+        );
+        await client.query('commit');
+
+        const tournament = await loadTournament(tournamentId);
+        if (!tournament) throw new Error('tournament vanished immediately after cancel');
+        const otherUserId = row.user_a_id === userId ? row.user_b_id : row.user_a_id;
+        return { tournament, otherUserId };
+      } catch (error) {
+        await client.query('rollback');
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async sweepExpiredTournamentRequests() {
+      const { rows } = await pool.query<{ id: string; couple_id: string }>(
+        `update public.tournaments
+            set status = 'expired', ended_at = now()
+          where status = 'pending' and request_expires_at <= now()
+          returning id, couple_id`,
+      );
+
+      const closed: { tournament: Tournament; userAId: string; userIds: [string, string] }[] = [];
+      for (const row of rows) {
+        const tournament = await loadTournament(row.id);
+        if (!tournament) continue;
+
+        const couple = await pool.query<{ user_a_id: string; user_b_id: string }>(
+          `select user_a_id, user_b_id from public.couples where id = $1`,
+          [row.couple_id],
+        );
+        const c = couple.rows[0];
+        if (!c) continue;
+
+        closed.push({ tournament, userAId: c.user_a_id, userIds: [c.user_a_id, c.user_b_id] });
+      }
+
+      return closed;
     },
 
     async advanceGame(tournamentId, input, userAId) {
@@ -488,10 +683,13 @@ export function createTournamentRepository(pool: Pool): TournamentRepository {
     },
 
     async abandonTournament(tournamentId) {
+      // Not 'pending': an unanswered request is withdrawn through `cancelTournamentRequest`
+      // instead, which is creator-only and leaves a distinct 'cancelled' status rather than
+      // 'abandoned' — the two are different events even though both end a tournament early.
       await pool.query(
         `update public.tournaments
          set status = 'abandoned', ended_at = now(), paused_until = null
-         where id = $1 and status in ('pending', 'active', 'paused')`,
+         where id = $1 and status in ('active', 'paused')`,
         [tournamentId],
       );
     },
@@ -546,6 +744,7 @@ export function tournamentViewForUser(
     id: tournament.id,
     name: tournament.name,
     status: tournament.status,
+    direction: tournament.createdByUserId === viewerId ? 'outgoing' : 'incoming',
     games: tournament.games.map((g): TournamentGameView => ({
       position: g.position,
       gameSlug: g.gameSlug,
@@ -560,5 +759,6 @@ export function tournamentViewForUser(
     partnerTotalPoints: viewerIsA ? tournament.totalPointsB : tournament.totalPointsA,
     winner,
     pausedUntil: tournament.pausedUntil?.toISOString() ?? null,
+    expiresAt: tournament.requestExpiresAt?.toISOString() ?? null,
   };
 }

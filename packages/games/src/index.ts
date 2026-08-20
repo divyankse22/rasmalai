@@ -79,7 +79,29 @@ export {
 } from './reflex/protocol';
 export type { MoveAction, ReflexAction, ReflexView, Runner, Wave } from './reflex/protocol';
 
+export { meta as basketballMeta } from './basketball/meta';
+export {
+  LEVELS as BASKETBALL_LEVELS,
+  ROUNDS_PER_LEVEL as BASKETBALL_ROUNDS_PER_LEVEL,
+  TOTAL_ROUNDS as BASKETBALL_TOTAL_ROUNDS,
+  TOTAL_SHOTS as BASKETBALL_TOTAL_SHOTS,
+  SHOT_CLOCK_MS as BASKETBALL_SHOT_CLOCK_MS,
+  SETTLE_MS as BASKETBALL_SETTLE_MS,
+  THREE_POINT_DISTANCE as BASKETBALL_THREE_POINT_DISTANCE,
+  MIN_ANGLE_DEG as BASKETBALL_MIN_ANGLE_DEG,
+  MAX_ANGLE_DEG as BASKETBALL_MAX_ANGLE_DEG,
+} from './basketball/protocol';
+export type {
+  BasketballAction,
+  BasketballView,
+  HoopMotion,
+  ShootAction,
+  ShotOutcome,
+  ShotView,
+} from './basketball/protocol';
+
 import type { GameMeta } from './contract';
+import { meta as basketball } from './basketball/meta';
 import { meta as bombDefusal } from './bomb-defusal/meta';
 import { meta as fourInARow } from './four-in-a-row/meta';
 import { meta as guessMyAnswer } from './guess-my-answer/meta';
@@ -95,6 +117,7 @@ export const GAME_META: Readonly<Record<string, GameMeta>> = {
   [guessMyAnswer.slug]: guessMyAnswer,
   [bombDefusal.slug]: bombDefusal,
   [reflex.slug]: reflex,
+  [basketball.slug]: basketball,
 };
 
 export function findGameMeta(slug: string): GameMeta | null {

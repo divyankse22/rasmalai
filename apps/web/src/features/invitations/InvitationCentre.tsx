@@ -13,6 +13,7 @@ import { Button } from '@/design-system/Button';
 import { PersonName } from '@/design-system/PersonName';
 import { avatarGlyph } from '@/features/onboarding/avatars';
 import { gameGlyph } from '@/features/dashboard/gameGlyphs';
+import { formatClock, useCountdown } from '@/features/play/useCountdown';
 import { getFromApi, postToApi } from '@/lib/clientApi';
 import { useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
@@ -27,35 +28,10 @@ const CLOSING_EVENTS = new Set<string>([
   EVENTS.invitation.invalidated,
 ]);
 
-/**
- * Time left on an invitation, as m:ss.
- *
- * The clock lives in state and is only read from a callback — `Date.now()` during render is impure
- * and React's rules forbid it. The zero-delay sync makes a newly arrived invitation show the right
- * number immediately rather than a second late.
- */
-function useCountdown(expiresAt: string | undefined): string {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!expiresAt) return;
-
-    const sync = () => setNow(Date.now());
-    const immediate = setTimeout(sync, 0);
-    const timer = setInterval(sync, 1000);
-
-    return () => {
-      clearTimeout(immediate);
-      clearInterval(timer);
-    };
-  }, [expiresAt]);
-
-  if (!expiresAt) return '';
-
-  const remaining = Math.max(0, new Date(expiresAt).getTime() - now);
-  const minutes = Math.floor(remaining / 60_000);
-  const seconds = Math.floor((remaining % 60_000) / 1000);
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+/** Time left on an invitation, as m:ss — the same countdown the play screen counts a match with. */
+function useExpiryCountdown(expiresAt: string | undefined): string {
+  const seconds = useCountdown(expiresAt ? new Date(expiresAt).getTime() : null);
+  return seconds === null ? '' : formatClock(seconds);
 }
 
 /**
@@ -104,7 +80,7 @@ export function InvitationCentre() {
     [invitation?.gameSlug],
   );
 
-  const expiresIn = useCountdown(invitation?.expiresAt);
+  const expiresIn = useExpiryCountdown(invitation?.expiresAt);
 
   /** The server is the authority on what is live; this is how a stale screen catches up. */
   const resync = useCallback(async () => {

@@ -27,12 +27,13 @@ import { rateLimit } from '../rateLimit';
 import { requireUser } from '../requireUser';
 
 /**
- * Creating, reading and resuming a tournament.
+ * Requesting, answering, reading and resuming a tournament.
  *
- * Starting one is the same act as accepting an invitation: it opens a live session and moves both
- * of them into it. There is no invitation to accept, because a tournament *is* the agreement — the
- * partner sees "🏆 Tournament (n games)" and the game list is revealed one at a time as the series
- * goes (D-3), so nobody plans their evening around what is coming fourth.
+ * Starting one works like a game invitation: the creator's request is `pending`, the partner
+ * answers, and only an accept opens a live session and moves both of them into it. The partner sees
+ * the whole line-up before answering — an accept is a real commitment to a locked, unskippable
+ * sequence — and once running, the games are still revealed one at a time as the series goes (D-3),
+ * so nobody plans their evening around what is coming fourth mid-series.
  */
 
 const createBody = z.object({
@@ -44,13 +45,17 @@ const createBody = z.object({
     .max(TOURNAMENT_MAX_GAMES),
 });
 
+const respondBody = z.object({ accept: z.boolean() });
+
 /** Which failures are the caller's fault, and what each deserves. */
 const STATUS_BY_CODE: Record<string, number> = {
   not_paired: 409,
   tournament_not_found: 404,
   tournament_not_active: 409,
   tournament_not_paused: 409,
-  // Gone rather than a generic conflict: it was real, and its 48 hours have passed (D-5).
+  tournament_not_pending: 409,
+  // Gone rather than a generic conflict: it was real, and its moment has passed (D-5, or a
+  // request's five minutes).
   tournament_expired: 410,
   already_has_tournament: 409,
   invalid_game_count: 400,
@@ -59,6 +64,7 @@ const STATUS_BY_CODE: Record<string, number> = {
   game_not_playable: 409,
   already_in_game: 409,
   partner_offline: 409,
+  cannot_answer_own: 403,
 };
 
 function failed(error: unknown, res: Response): boolean {
@@ -168,6 +174,18 @@ export function createTournamentsRouter(
     }
   }
 
+  /** Tells both of them a tournament changed state (declined, cancelled, expired, abandoned…). */
+  function announceUpdate(
+    userIds: readonly string[],
+    viewOf: (userId: string) => TournamentView,
+  ): void {
+    for (const userId of new Set(userIds)) {
+      realtime.sendToUser(userId, EVENTS.results.tournamentUpdated, {
+        tournament: viewOf(userId),
+      });
+    }
+  }
+
   router.get('/tournaments/active', async (req: Request, res: Response) => {
     const userId = req.userId!;
     const couple = await resolveCouple(userId);
@@ -204,7 +222,11 @@ export function createTournamentsRouter(
 
       const userId = req.userId!;
       try {
-        const { coupleId, userAId, partnerId, players } = await requireReadyCouple(userId);
+        // `engine.start` never runs here — nothing opens until an accept — but the rest of
+        // `requireReadyCouple` still applies: nothing else running (ADR-009), and a partner who is
+        // actually here, because a request to somebody not signed in is five minutes of waiting for
+        // a sheet nobody will ever see (the same reasoning `invitations.ts` gives).
+        const { coupleId, userAId, partnerId } = await requireReadyCouple(userId);
 
         const tournament = await tournaments.createTournament({
           coupleId,
@@ -212,6 +234,52 @@ export function createTournamentsRouter(
           name: parsed.data.name,
           gameSlugs: parsed.data.gameSlugs,
         });
+
+        for (const reader of new Set([userId, partnerId])) {
+          realtime.sendToUser(reader, EVENTS.tournamentRequest.created, {
+            tournament: tournamentViewForUser(tournament, reader, userAId),
+          });
+        }
+        logger.info(
+          { userId, tournamentId: tournament.id, games: parsed.data.gameSlugs.length },
+          'tournament requested',
+        );
+
+        res.status(201).json({ tournament: tournamentViewForUser(tournament, userId, userAId) });
+      } catch (error) {
+        if (failed(error, res)) return;
+        throw error;
+      }
+    },
+  );
+
+  router.post('/tournaments/:id/respond', async (req: Request, res: Response) => {
+    const parsed = respondBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: 'invalid_payload', message: 'Play, or not now?' } });
+      return;
+    }
+
+    const tournamentId = req.params.id;
+    if (typeof tournamentId !== 'string') {
+      res.status(400).json({ error: { code: 'invalid_payload', message: 'Unknown tournament.' } });
+      return;
+    }
+
+    const userId = req.userId!;
+    try {
+      if (parsed.data.accept) {
+        // Accepting is exactly what an instant-start create used to do: open the session and move
+        // both of them into it. `requireReadyCouple` re-checks nothing has started elsewhere and the
+        // partner (the person accepting) is here, which they trivially are — the check that matters
+        // is the creator's partner slot, resolved the same way regardless of who is answering.
+        const { userAId, partnerId, players } = await requireReadyCouple(userId);
+
+        const { tournament } = await tournaments.respondToTournamentRequest(
+          tournamentId,
+          userId,
+          true,
+        );
 
         let sessionId: string;
         try {
@@ -227,21 +295,65 @@ export function createTournamentsRouter(
         announceStart([userId, partnerId], sessionId, (reader) =>
           tournamentViewForUser(tournament, reader, userAId),
         );
-        logger.info(
-          { userId, tournamentId: tournament.id, games: parsed.data.gameSlugs.length, sessionId },
-          'tournament created',
-        );
+        logger.info({ userId, tournamentId, sessionId }, 'tournament request accepted');
 
-        res.status(201).json({
-          tournament: tournamentViewForUser(tournament, userId, userAId),
-          sessionId,
-        });
-      } catch (error) {
-        if (failed(error, res)) return;
-        throw error;
+        res.json({ accepted: true, sessionId });
+        return;
       }
-    },
-  );
+
+      const couple = await resolveCouple(userId);
+      if (!couple) {
+        throw new TournamentError('not_paired', 'You need a partner before you can play a series.');
+      }
+
+      const { tournament, otherUserId } = await tournaments.respondToTournamentRequest(
+        tournamentId,
+        userId,
+        false,
+      );
+
+      announceUpdate([userId, otherUserId], (reader) =>
+        tournamentViewForUser(tournament, reader, couple.userAId),
+      );
+      logger.info({ userId, tournamentId }, 'tournament request declined');
+
+      res.json({ accepted: false });
+    } catch (error) {
+      if (failed(error, res)) return;
+      throw error;
+    }
+  });
+
+  router.post('/tournaments/:id/cancel', async (req: Request, res: Response) => {
+    const tournamentId = req.params.id;
+    if (typeof tournamentId !== 'string') {
+      res.status(400).json({ error: { code: 'invalid_payload', message: 'Unknown tournament.' } });
+      return;
+    }
+
+    const userId = req.userId!;
+    try {
+      const couple = await resolveCouple(userId);
+      if (!couple) {
+        throw new TournamentError('not_paired', 'You need a partner before you can play a series.');
+      }
+
+      const { tournament, otherUserId } = await tournaments.cancelTournamentRequest(
+        tournamentId,
+        userId,
+      );
+
+      announceUpdate([userId, otherUserId], (reader) =>
+        tournamentViewForUser(tournament, reader, couple.userAId),
+      );
+      logger.info({ userId, tournamentId }, 'tournament request cancelled');
+
+      res.json({ cancelled: true });
+    } catch (error) {
+      if (failed(error, res)) return;
+      throw error;
+    }
+  });
 
   router.post('/tournaments/:id/resume', async (req: Request, res: Response) => {
     const tournamentId = req.params.id;
@@ -300,11 +412,9 @@ export function createTournamentsRouter(
 
       const abandoned = { ...existing, status: 'abandoned' as const };
       // Both, because either of them may be looking at a card for a series that no longer exists.
-      for (const reader of [userId, couple.partnerId]) {
-        realtime.sendToUser(reader, EVENTS.results.tournamentUpdated, {
-          tournament: tournamentViewForUser(abandoned, reader, couple.userAId),
-        });
-      }
+      announceUpdate([userId, couple.partnerId], (reader) =>
+        tournamentViewForUser(abandoned, reader, couple.userAId),
+      );
       logger.info({ userId, tournamentId }, 'tournament abandoned');
 
       res.json({ abandoned: true });

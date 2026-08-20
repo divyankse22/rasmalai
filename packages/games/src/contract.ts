@@ -221,6 +221,20 @@ export interface GameRenderProps<View = unknown> {
   you: SessionPlayer;
   partner: SessionPlayer;
   act(action: unknown): void;
+  /**
+   * The partner's most recently sent ephemeral signal (`game.event`), or `null` before one has
+   * arrived this session.
+   *
+   * Opaque to the platform — a game defines its own shape and is the only reader of it. Relayed and
+   * forgotten the same way a reaction is: never validated, never persisted, and only the latest
+   * value is ever kept, so a game must not depend on receiving every one that was sent, only the
+   * last. Not an action: nothing it carries can move `state`, a score, or who won — it exists purely
+   * so a game can show players something of each other before an action is committed, such as a
+   * live aim while a shot is still being lined up.
+   */
+  partnerSignal: unknown;
+  /** Sends `signal` to the partner as this session's next `game.event`. Fire-and-forget. */
+  sendSignal(signal: unknown): void;
 }
 
 /**

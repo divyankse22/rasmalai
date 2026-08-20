@@ -114,7 +114,18 @@ export interface MatchResultView {
 // Tournaments
 // ---------------------------------------------------------------------------------------------
 
-export type TournamentStatus = 'pending' | 'active' | 'paused' | 'completed' | 'abandoned';
+export type TournamentStatus =
+  | 'pending'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'abandoned'
+  /** The receiver said no. Distinct from `abandoned`, which is a series that was running. */
+  | 'declined'
+  /** Nobody answered within the request's five minutes (`request_expires_at`). */
+  | 'expired'
+  /** The creator withdrew the request before it was answered. */
+  | 'cancelled';
 
 /** One game in the tournament series, from the reader's perspective. */
 export interface TournamentGameView {
@@ -134,6 +145,8 @@ export interface TournamentView {
   id: string;
   name: string;
   status: TournamentStatus;
+  /** Whether the reader sent this request or is being asked to answer it. Same idea as `InvitationView.direction`. */
+  direction: 'incoming' | 'outgoing';
   games: TournamentGameView[];
   /** 1-indexed position of the game currently being played, or the next one to play. */
   currentPosition: number;
@@ -142,6 +155,8 @@ export interface TournamentView {
   winner: 'you' | 'partner' | null;
   /** ISO. When a paused tournament must be resumed by, or null (D-5). */
   pausedUntil: string | null;
+  /** ISO. When a `pending` request stops being answerable, or null once it is answered either way. */
+  expiresAt: string | null;
 }
 
 export interface SessionView {
@@ -327,6 +342,28 @@ export interface ReactionSendPayload {
 }
 
 /**
+ * Both directions of `game.event`: a per-game ephemeral signal, opaque to the platform.
+ *
+ * Not a validated action — `submitAction`/`applyAction` never see it, and nothing it carries can
+ * change `matches`, a score, or who won. It exists for the things a game wants its players to see
+ * of each other *before* an action is committed, such as a live aim while a shot is still being
+ * lined up (basketball). Relayed and forgotten, the same as a reaction (`docs/04` section 4): the
+ * server stamps `fromUserId` and passes the shape through without reading it, and only the most
+ * recent one sent ever matters to a receiver.
+ */
+export interface GameEventPayload {
+  event: unknown;
+  /** Filled in by the server on the way out, so nobody can signal as their partner. */
+  fromUserId?: string;
+}
+
+/** Client → server: `game.event`. */
+export interface GameEventSendPayload {
+  sessionId: string;
+  event: unknown;
+}
+
+/**
  * How long a player has to come back before the session gives up on them.
  *
  * During an active match, running this down is a forfeit: the player who stayed wins a competitive
@@ -369,6 +406,9 @@ export const INVITATION_TTL_MS = 5 * 60_000;
 /** A paused tournament expires after 48 hours (D-5). */
 export const TOURNAMENT_PAUSE_TTL_MS = 2 * 24 * 60 * 60_000;
 
+/** A tournament request goes unanswered for at most five minutes, same as a game invitation. */
+export const TOURNAMENT_REQUEST_TTL_MS = 5 * 60_000;
+
 /** 3–7 games per tournament (D-1). */
 export const TOURNAMENT_MIN_GAMES = 3;
 export const TOURNAMENT_MAX_GAMES = 7;
@@ -384,8 +424,16 @@ export interface TournamentGameResultPayload {
   finishedPosition: number;
 }
 
-/** `tournament.updated` — sent on any tournament state change (pause, resume, complete, abandon). */
+/**
+ * `tournament.updated` — sent on any tournament state change (pause, resume, complete, abandon, and
+ * a request being declined, cancelled, or left to expire).
+ */
 export interface TournamentUpdatedPayload {
+  tournament: TournamentView;
+}
+
+/** `tournament.request.created` — sent to both partners the moment one of them asks for a series. */
+export interface TournamentRequestCreatedPayload {
   tournament: TournamentView;
 }
 

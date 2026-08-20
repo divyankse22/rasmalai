@@ -244,7 +244,12 @@ export function createStubPairingRepository(): PairingRepository & {
       return stub.state;
     },
 
-    async findPartner(): Promise<PartnerProfile | null> {
+    async findPartner(userId: string): Promise<PartnerProfile | null> {
+      if (stub.partner === null) return null;
+      // Every existing caller is TEST_USER_ID, for whom this is already correct. A route answered
+      // by the *other* fixed test user (tournament requests are the first to do this) needs the
+      // pairing flipped rather than told its partner is itself.
+      if (userId === stub.partner.id) return { ...stub.partner, id: TEST_USER_ID };
       return stub.partner;
     },
 
@@ -340,7 +345,12 @@ export function createStubDashboardRepository(): DashboardRepository & {
     lifetimeTotals: structuredClone(emptyLifetime),
     recent: { gamesPlayed: 0, youWon: 0, partnerWon: 0, draws: 0 } as RecentStats,
 
-    async findCoupleScope() {
+    async findCoupleScope(userId: string) {
+      if (stub.scope === null) return null;
+      // `viewerIsUserA` is written from TEST_USER_ID's point of view, the only caller until
+      // tournament requests started answering routes as OTHER_USER_ID too — flip it for them
+      // rather than telling both callers they are the same slot.
+      if (userId === OTHER_USER_ID) return { ...stub.scope, viewerIsUserA: !stub.scope.viewerIsUserA };
       return stub.scope;
     },
     async catalogue() {
@@ -521,10 +531,25 @@ export function testTournament(overrides: Partial<Tournament> = {}): Tournament 
     startedAt: new Date(),
     endedAt: null,
     pausedUntil: null,
+    requestExpiresAt: null,
     totalPointsA: 0,
     totalPointsB: 0,
     winnerUserId: null,
     games,
+    ...overrides,
+  };
+}
+
+/** An unanswered request: `pending`, nothing started, every game still `pending`. */
+export function testTournamentRequest(overrides: Partial<Tournament> = {}): Tournament {
+  const base = testTournament({
+    status: 'pending',
+    startedAt: null,
+    requestExpiresAt: new Date(Date.now() + 5 * 60_000),
+  });
+  return {
+    ...base,
+    games: base.games.map((game) => ({ ...game, status: 'pending' })),
     ...overrides,
   };
 }
@@ -542,13 +567,20 @@ export function createStubTournamentRepository(): TournamentRepository & {
   active: Tournament | null;
   created: { name: string; gameSlugs: string[] }[];
   abandoned: string[];
+  responded: { tournamentId: string; userId: string; accept: boolean }[];
+  cancelled: string[];
 } {
   let failure: TournamentError | null = null;
+
+  /** The stub only ever runs against this fixed pair — whichever one didn't act is "the other". */
+  const otherOf = (userId: string) => (userId === TEST_USER_ID ? OTHER_USER_ID : TEST_USER_ID);
 
   const stub = {
     active: null as Tournament | null,
     created: [] as { name: string; gameSlugs: string[] }[],
     abandoned: [] as string[],
+    responded: [] as { tournamentId: string; userId: string; accept: boolean }[],
+    cancelled: [] as string[],
 
     failWith(error: TournamentError | null) {
       failure = error;
@@ -557,7 +589,8 @@ export function createStubTournamentRepository(): TournamentRepository & {
     async createTournament({ name, gameSlugs }: { name: string; gameSlugs: string[] }) {
       if (failure) throw failure;
       stub.created.push({ name, gameSlugs });
-      stub.active = testTournament({ name });
+      // A request, not an instant-start: `respondToTournamentRequest` is what activates it.
+      stub.active = testTournamentRequest({ name });
       return stub.active;
     },
 
@@ -567,6 +600,35 @@ export function createStubTournamentRepository(): TournamentRepository & {
 
     async getTournament(tournamentId: string) {
       return stub.active && stub.active.id === tournamentId ? stub.active : null;
+    },
+
+    async respondToTournamentRequest(tournamentId: string, userId: string, accept: boolean) {
+      if (failure) throw failure;
+      stub.responded.push({ tournamentId, userId, accept });
+      stub.active = accept
+        ? testTournament({
+            ...stub.active,
+            status: 'active',
+            startedAt: new Date(),
+            requestExpiresAt: null,
+          })
+        : testTournamentRequest({ ...stub.active, status: 'declined', requestExpiresAt: null });
+      return { tournament: stub.active, otherUserId: otherOf(userId) };
+    },
+
+    async cancelTournamentRequest(tournamentId: string, userId: string) {
+      if (failure) throw failure;
+      stub.cancelled.push(tournamentId);
+      stub.active = testTournamentRequest({
+        ...stub.active,
+        status: 'cancelled',
+        requestExpiresAt: null,
+      });
+      return { tournament: stub.active, otherUserId: otherOf(userId) };
+    },
+
+    async sweepExpiredTournamentRequests() {
+      return [];
     },
 
     async advanceGame() {

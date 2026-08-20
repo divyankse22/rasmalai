@@ -1,11 +1,11 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import {
   TOURNAMENT_MAX_GAMES,
   TOURNAMENT_MIN_GAMES,
   type CatalogueGame,
+  type TournamentView,
 } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
@@ -19,15 +19,21 @@ import { postToApi } from '@/lib/clientApi';
  * Only games with a module behind them are offered — the catalogue lists what the product will be,
  * but a series that reached an unbuilt game would simply stop. Each may be picked once (D-2), which
  * is also why the list is checkboxes rather than a counter.
+ *
+ * Submitting sends a *request* rather than starting anything — the partner still has to answer it,
+ * the same way a game invitation works. `onCreated` hands the pending tournament straight to the
+ * caller so the dashboard can show "waiting for them" immediately, without a blink before the
+ * `tournament.request.created` socket echo confirms the same thing a moment later.
  */
 export function CreateTournamentModal({
   games,
   onClose,
+  onCreated,
 }: {
   games: CatalogueGame[];
   onClose: () => void;
+  onCreated: (tournament: TournamentView) => void;
 }) {
-  const router = useRouter();
   const [name, setName] = useState('');
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -54,15 +60,14 @@ export function CreateTournamentModal({
     setBusy(true);
     setError(undefined);
 
-    const result = await postToApi<{ sessionId: string }>('/api/tournaments', {
+    const result = await postToApi<{ tournament: TournamentView }>('/api/tournaments', {
       name: name.trim(),
       gameSlugs: picked,
     });
 
     if (result.ok) {
-      // Both partners are moved by the socket event as well; this is just the creator not waiting
-      // for their own round trip to come back the long way.
-      router.push(`/play/${result.data.sessionId}`);
+      onCreated(result.data.tournament);
+      onClose();
       return;
     }
 
@@ -84,8 +89,8 @@ export function CreateTournamentModal({
           </span>
           <h2 className="font-display text-lg font-bold text-ink">Start a tournament</h2>
           <p className="text-sm text-muted">
-            Pick {TOURNAMENT_MIN_GAMES}–{TOURNAMENT_MAX_GAMES} games. They are locked once you
-            start, and played in the order you pick them.
+            Pick {TOURNAMENT_MIN_GAMES}–{TOURNAMENT_MAX_GAMES} games. They are locked once your
+            partner accepts, and played in the order you pick them.
           </p>
         </div>
 
@@ -175,7 +180,7 @@ export function CreateTournamentModal({
             disabled={busy || !enough || name.trim().length === 0}
             onClick={() => void submit()}
           >
-            {busy ? 'Starting…' : 'Start 🏆'}
+            {busy ? 'Asking…' : 'Ask 🏆'}
           </Button>
         </div>
       </Card>

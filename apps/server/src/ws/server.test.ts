@@ -156,6 +156,9 @@ const sessionsStub: SessionRegistry = {
   react(...args) {
     calls.push({ method: 'react', args });
   },
+  sendGameEvent(...args) {
+    calls.push({ method: 'sendGameEvent', args });
+  },
   handlePresence() {},
   closeAll() {},
   size: 0,
