@@ -39,7 +39,7 @@ Supabase accounts, created, paired and deleted by the run itself.
 Answer, Bomb Defusal, Reflex and Basketball through `sessionRegistry` against real Postgres, and all
 twelve migrations are applied. What is still outstanding for slices 7c and 8–11 alike is the
 **two-account browser run**: nobody has played any of these games in two browser profiles. See known
-limitations 29–31, and 35 for a flaky test in the unit lane.
+limitations 29–31.
 
 ---
 
@@ -795,7 +795,29 @@ Not "it compiles" — these were actually run.
 - **All twelve migrations confirmed applied** by querying `public.schema_migrations` on the live
   project, with seven games `enabled` in Postgres and the other ten catalogue rows deliberately
   `false`.
-- Typecheck, lint, **624 tests** and both production builds green (`npm run verify`).
+- Typecheck, lint, **655 tests** and both production builds green (`npm run verify`), run three
+  times consecutively after the timeout fix in limitation 35.
+- **Coverage is now measured rather than guessed** (`npm run test:coverage`): 62.6% of lines and
+  **91.9% of branches** in the unit lane. The line figure is held down almost entirely by things
+  that are deliberately not unit-tested, and the honest reading is the branch number. What is
+  genuinely uncovered, across both lanes:
+  - the seven `client.tsx` game scenes and `packages/games/src/client.ts` — Phaser and React, with
+    no jsdom environment configured. Rendering them is a browser job and belongs with the
+    two-account sitting (limitations 29–30);
+  - `dashboardRepository`, `pairingRepository`, `invitationsRepository`, `usersRepository` and
+    `tournamentRepository` — all SQL, all at 0–11%. `statisticsRepository` is the one exception at
+    **85%**, because the slice-11 game suites drive it. The harness exists now, so these five are
+    the obvious next slice of integration work and the only remaining place where "verified" still
+    rests on runs that were never committed;
+  - `index.ts` (the composition root) and `db/pool.ts` — wiring and configuration, where a test
+    would assert the wiring back to itself.
+- **Four previously untested modules now have tests** (30 new checks). `expirySweeper` and
+  `tournamentRequestSweeper` both carried a `runOnce()` documented as existing "so tests do not have
+  to wait for a timer", and neither had ever been called by one. The test that matters on both is
+  that a rejected sweep is **caught** rather than becoming an unhandled rejection: the sweep runs on
+  a bare `setInterval` with nobody awaiting it, so without the `.catch` Node kills the process — a
+  backend that dies because Postgres hiccuped would take a live game with it. That test was checked
+  against a deliberately broken copy to confirm it fails when the `.catch` is removed.
 
 Slice 10's evidence is thinner than earlier slices' and worth being plain about: there was no
 database and no browser available, so what follows is unit coverage, the compiler, and the built
@@ -1209,15 +1231,15 @@ output — not two people playing. Limitations 28–32 say what that leaves.
    Fixing it means a shared outcome on `MatchResultView`, which is a platform change for one
    sentence and was not worth making blind.
 
-35. **`invitations.test.ts` is load-sensitive and can flake the gate.** Its 24 tests each make a
-   real loopback `fetch` against a real listening server, on vitest's default 5-second budget. One
-   `npm run verify` in five failed with `Test timed out in 5000ms` on
-   `withdrawing an invitation > clears it from both screens at once`; the same file passed 3/3 in
-   isolation and the full suite passed 3/3 immediately afterwards, so this is a timing budget under
-   machine load and not a race in the route. The file predates slice 11 (last touched in `e1769ab`)
-   and was left alone deliberately rather than fixed inside a documentation task. The fix, when
-   somebody takes it: give this file its own `testTimeout`, or start the server once per file
-   instead of per test.
+35. **Resolved: the gate was load-sensitive and flaked.** 138 tests across eight files build an
+   Express app and bind a **real TCP listener per test**, on vitest's default 5-second budget. Two
+   runs failed on different tests in `invitations.test.ts` — once under `npm run verify` (which
+   runs typecheck first) and once under coverage instrumentation — while the same file passed in
+   isolation every time. Not a race in any route: a budget with no headroom. `vitest.config.ts` now
+   sets `testTimeout: 20_000`; the suite still finishes in about three seconds, so the higher
+   ceiling only costs time when a test is genuinely hung. Verified with three consecutive
+   `npm run verify` runs and three coverage runs, all green. The deeper fix — one server per file
+   rather than per test — is still available if these ever get slow enough to matter.
 
 ---
 

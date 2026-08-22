@@ -30,3 +30,6 @@ npm-debug.log*
 
 # Subagent-driven development scratch (ledger, briefs, review packages).
 .superpowers/
+
+# Scratch from the claude-flow CLI used for coverage-gap analysis.
+.claude-flow/
