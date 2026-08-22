@@ -8,6 +8,7 @@
 
 import type { AnyGameRules } from './contract';
 import { rules as basketball } from './basketball/server';
+import { rules as wouldYouRather } from './would-you-rather/server';
 import { rules as bombDefusal } from './bomb-defusal/server';
 import { rules as fourInARow } from './four-in-a-row/server';
 import { rules as guessMyAnswer } from './guess-my-answer/server';
@@ -23,6 +24,7 @@ const REGISTRY: Readonly<Record<string, AnyGameRules>> = {
   [bombDefusal.meta.slug]: bombDefusal,
   [reflex.meta.slug]: reflex,
   [basketball.meta.slug]: basketball,
+  [wouldYouRather.meta.slug]: wouldYouRather,
 };
 
 /**

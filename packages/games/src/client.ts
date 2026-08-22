@@ -32,6 +32,7 @@ const RENDERERS: Readonly<Record<string, GameLoader>> = {
   'bomb-defusal': () => import('./bomb-defusal/client'),
   reflex: () => import('./reflex/client'),
   basketball: () => import('./basketball/client'),
+  'would-you-rather': () => import('./would-you-rather/client'),
 };
 
 export function findGameRenderer(slug: string): GameLoader | null {

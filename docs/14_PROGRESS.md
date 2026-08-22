@@ -6,8 +6,8 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: after slice 11 — a real-Postgres integration lane, five games driven through the
-real session registry, and the tournament stalling rule.
+Last updated: after slice 12 — Would You Rather, the first game where a player chooses the
+question.
 
 ---
 
@@ -28,10 +28,11 @@ real session registry, and the tournament stalling rule.
 | 9 | Tournaments: create, lock, sequential play, 3/1/0, restart-on-failed-reconnect | **done**, automated gate green; two-account browser run outstanding |
 | 10 | Memory, Guess My Answer, Bomb Defusal, Reflex (Phaser), Basketball (Phaser); counter-proposal UI; score units; tournament requests | **done**, automated gate green; two-account browser run outstanding |
 | 11 | Integration lane: five games through the real registry against real Postgres; tournament stalling rule | **done, verified** against the live database |
-| 12+ | Mobile polish, deployment, remaining games | not started |
+| 12 | Would You Rather: asymmetric ask/answer/predict, 60-dilemma deck, competitive scoring | **done**, automated gate green; two-account browser run outstanding |
+| 13+ | Word Game, Boat Escape, mobile polish, deployment | not started |
 
-Gate at the time of writing: **624 tests passing**, typecheck, lint and both builds green
-(`npm run verify`), plus **25 integration checks in 6 files** against real Postgres
+Gate at the time of writing: **697 tests passing**, typecheck, lint and both builds green
+(`npm run verify`), plus **30 integration checks in 7 files** against real Postgres
 (`npm run test:integration`) — real matches played through the real session registry by throwaway
 Supabase accounts, created, paired and deleted by the run itself.
 
@@ -40,6 +41,60 @@ Answer, Bomb Defusal, Reflex and Basketball through `sessionRegistry` against re
 twelve migrations are applied. What is still outstanding for slices 7c and 8–11 alike is the
 **two-account browser run**: nobody has played any of these games in two browser profiles. See known
 limitations 29–31.
+
+---
+
+## Slice 12: the first game where you choose the question
+
+Eight games now. This one exists because the catalogue had a gap that was not a category — every
+game so far hands both seats the same problem. Would You Rather does not: one of them is dealt three
+dilemmas and picks which to inflict, and only then bets on the answer.
+
+**It was designed, not implemented.** No specification for any of the ten remaining games existed
+in this repository — `docs/01` section 7 and `docs/05` list them as names, and the richest
+description anywhere was one line of marketing copy in the `0004` seed. The written spec supplied
+for this slice is the first real design input the game has ever had, and it is now a governing
+document alongside the numbered ones.
+
+**Two documented product decisions were deliberately reversed, and both are written down.**
+`docs/01` section 8 asks for games that feel "cute, playful, chaotic", and `guess-my-answer` files
+its own bank as "deliberately gentle — the wrong place for a question that can start an argument".
+This game is specified to be psychologically uncomfortable. Rather than pick a winner, the deck is
+**banded by difficulty**: rounds 1–2 draw from 1–2, rounds 3–4 from 2–4, rounds 5–6 from 3–5. The
+match warms up. Nobody opens with mortality and nobody finishes on whether they like being early,
+and `difficulty` stopped being metadata and became the thing that schedules the evening.
+
+The second reversal is scoring. `guess-my-answer/meta.ts` says plainly that "beating your partner at
+knowing them is not a thing this product wants to encourage", and that stays true of *that* game,
+where neither seat chose the question. Here the Asker picked the ground before placing the bet, so
+`scoringKind` is `competitive` while `category` stays `social` — the shape Memory already
+established, with `0012` moving `games.scoring_kind` to match.
+
+**The deck lives in `deck.ts`, not `protocol.ts`, and that is the one real architectural call.**
+Guess My Answer publishes its fourteen questions to the browser, which is right for a game where
+both seats see the same question anyway. Here the Answerer must see exactly one of three, so a deck
+in the client bundle would put the other two on their machine and leave the secret resting on the
+renderer's manners. Three fences keep it server-side: nothing browser-reachable imports it,
+`packages/games/package.json` publishes only three entrypoints so the path does not resolve from
+outside the package, and the web app's eslint config now bans `@rasmalai/games/*/deck` alongside the
+existing `*/server` rule.
+
+**The hidden information is enforced by the type system, not by discipline.** `getView` returns a
+discriminated union, and `AnswererView` has **no `candidates` property** — not a nullable one, none
+— so a leak fails the build rather than a test. Every secret is gated on `phase` rather than on
+whether a field happens to be filled: `round.answer` is set a whole phase before the Asker may see
+it, so "is it null yet" is exactly the wrong question and asking it is how this game would leak. The
+view carries no boolean derived from a secret at all, which is a direct consequence of choosing a
+sequential machine over a simultaneous one.
+
+One back door is named in the client rather than only here: **`sendSignal` must never be used in
+this game.** The platform relays game events raw and unvalidated without passing through `getView`,
+so a well-meant "they are hovering over A" would walk around every fence above.
+
+Reconnection needed no work. `getView` is pure and re-derived per frame, the fork is on the seat
+rather than anything connection-scoped, and seats are fixed at session creation — so a reconnecting
+Answerer gets no candidates for the same reason they never had any. Two tests prove it rather than
+the argument being trusted.
 
 ---
 
@@ -795,8 +850,15 @@ Not "it compiles" — these were actually run.
 - **All twelve migrations confirmed applied** by querying `public.schema_migrations` on the live
   project, with seven games `enabled` in Postgres and the other ten catalogue rows deliberately
   `false`.
-- Typecheck, lint, **655 tests** and both production builds green (`npm run verify`), run three
-  times consecutively after the timeout fix in limitation 35.
+- **Slice 12: 42 unit checks and 5 integration checks for Would You Rather**, the two security ones
+  proven non-vacuous by breaking the code and watching them fail: removing the seat fork in
+  `getView` fails four tests including both, and ungating `answer` on the phase fails exactly the
+  one that should. Through the real registry against real Postgres: the two seats receive
+  structurally different frames, the two unchosen dilemmas never appear in the Answerer's, the
+  Asker's carries no answer until their prediction lands, and a match filed `social` records a real
+  `winner_user_id` with a 3–0 scoreline and increments `competitive_games` — which is the half
+  `catalogue.test.ts` cannot reach, because it compares two strings and this compares behaviour.
+- Typecheck, lint, **697 tests** and both production builds green (`npm run verify`).
 - **Coverage is now measured rather than guessed** (`npm run test:coverage`): 62.6% of lines and
   **91.9% of branches** in the unit lane. The line figure is held down almost entirely by things
   that are deliberately not unit-tested, and the honest reading is the branch number. What is
