@@ -6,7 +6,8 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: after slice 10 — four more games, the first canvas, and the counter-proposal picker.
+Last updated: after slice 11 — a real-Postgres integration lane, five games driven through the
+real session registry, and the tournament stalling rule.
 
 ---
 
@@ -25,18 +26,84 @@ Last updated: after slice 10 — four more games, the first canvas, and the coun
 | 7c | Session clock rework, partner presence, offline gate | **done**, automated gate green; two-account browser run outstanding |
 | 8 | Match records, lifetime aggregates, streaks, retention job | **done**, automated gate green; two-account browser run outstanding |
 | 9 | Tournaments: create, lock, sequential play, 3/1/0, restart-on-failed-reconnect | **done**, automated gate green; two-account browser run outstanding |
-| 10 | Memory, Guess My Answer, Bomb Defusal, Reflex (Phaser); counter-proposal UI; score units | **done**, automated gate green; two-account browser run outstanding |
-| 11+ | Mobile polish, deployment, remaining games | not started |
+| 10 | Memory, Guess My Answer, Bomb Defusal, Reflex (Phaser), Basketball (Phaser); counter-proposal UI; score units; tournament requests | **done**, automated gate green; two-account browser run outstanding |
+| 11 | Integration lane: five games through the real registry against real Postgres; tournament stalling rule | **done, verified** against the live database |
+| 12+ | Mobile polish, deployment, remaining games | not started |
 
-Gate at the time of writing: **557 tests passing**, typecheck, lint and both builds green
-(`npm run verify`), plus the **78 statistics checks** and **27 tournament checks** against real
-Postgres from earlier slices — real matches and real series run through the real repository by
-throwaway Supabase accounts, created, paired and deleted by the run itself.
+Gate at the time of writing: **624 tests passing**, typecheck, lint and both builds green
+(`npm run verify`), plus **25 integration checks in 6 files** against real Postgres
+(`npm run test:integration`) — real matches played through the real session registry by throwaway
+Supabase accounts, created, paired and deleted by the run itself.
 
-**Slice 10 has not been run against a live database or a browser.** Its 105 new unit tests, the
-catalogue-consistency guard, both builds and the bundle inspection are the evidence; `0009` has been
-written but not applied, and none of the four new games has been played by two people. See known
-limitations 28–31.
+**Slice 10's four games have now been run against a live database.** Slice 11 put Memory, Guess My
+Answer, Bomb Defusal, Reflex and Basketball through `sessionRegistry` against real Postgres, and all
+twelve migrations are applied. What is still outstanding for slices 7c and 8–11 alike is the
+**two-account browser run**: nobody has played any of these games in two browser profiles. See known
+limitations 29–31, and 35 for a flaky test in the unit lane.
+
+---
+
+## Slice 11: proof instead of inference
+
+Slice 10 shipped four games and asserted a great deal about them without ever executing a line of
+SQL. Its evidence section was honest about that, and limitation 29 said the quiet part out loud:
+nothing had exercised those games through `sessionRegistry` at all. This slice closes that gap by
+building the thing the repository had never had — an integration harness — and pointing it at five
+games.
+
+**The lane is opt-in, and that is the whole design.** `npm test` still runs 624 unit tests with no
+database, no secrets and no network; `vitest.config.ts` excludes `**/*.integration.test.ts` to keep
+it that way. `npm run test:integration` runs the other lane against the couple's real Supabase
+project, single-threaded on purpose: `matches_one_active_per_couple` and the shared rate limits make
+concurrent runs flaky in ways that have nothing to do with the code under test. Timeouts are 60
+seconds because a match plus its cleanup crosses the Atlantic several times. A contributor with no
+`.env` is not blocked, and CI does not need a database to be useful.
+
+**`apps/server/src/testing/integrationHarness.ts`** seeds a throwaway couple — two real Supabase
+auth users, two real `public.users` rows with real generated pairing codes, one real `couples` row —
+hands back a live `SessionRegistry`, a real `matchRecorder`, a real pool and a captured record of
+every emitted frame, and then deletes every trace of itself on `dispose()`. Only auth users the run
+itself created are ever deleted; nothing issues a `delete` against `public.users`, `couples` or
+`matches` by any other predicate, because these tests run against the couple's live data.
+
+**What each suite proves that its unit tests could not.** The rulebook tests call
+`rules.validateAction` against a `PlayerIndex`. These call `submitAction(sessionId, userId, ...)`
+and make the platform resolve that user to a seat, run the clock, and write the result:
+
+- **Memory** — a face-down card the reader has not earned is absent from a frame that actually
+  crossed the socket, and a `memory` result lands in `matches` as **competitive** even though the
+  catalogue files it under casual. That last one is a platform decision no rulebook test can see.
+- **Guess My Answer** — the partner is told *that* an answer landed and not what it was, rounds are
+  1-based through the real registry, and a social match is recorded with **no winner and no
+  competitive counter incremented**.
+- **Bomb Defusal** — the fuse **freezes across a real disconnect** and comes back intact, and role
+  enforcement is driven through the real user→seat→role mapping rather than a seat index. That
+  mapping is the most fragile in the codebase: roles swap every stage and the first defuser comes
+  from a coin flip, so this is the one game where a seat-index test proves the least.
+- **Reflex** — both runners get the identical hazard schedule from one server-side seed, and
+  **game time stops while somebody is away** and resumes with what was left. The pause is verified
+  by re-deriving the rulebook's own `gameTime()` from `originAt`, after forcing real elapsed
+  progress, so the assertion cannot pass vacuously.
+- **Basketball** — a full twenty-shot match plays to a **completed competitive record**, with an
+  explicit check that no shot timed out, which is what separates a real game from a forfeit.
+
+**Two production fixes came out of writing them**, both found because a real clock behaves
+differently from a fake one. `sessionRegistry` and `matchRunner` captured `now = Date.now` eagerly
+at factory-call time, which is behaviour-identical in production but meant every future test had to
+remember to work around it; the lookup is now lazy. And `dispose()` now drains the match recorder
+before deleting, so a forgotten drain in a test cannot race cleanup into a foreign-key violation.
+
+**A tournament stall is not a disconnect.** `resolveClock` fired its tournament branch for *any*
+expired clock while a session was active, including a player sitting there, connected, declining to
+move — it tore the session down before it had even worked out who was at fault. The rule in
+`docs/04` §6 exists so that one bad wifi moment cannot hand over points in a standings table. A
+present player who stops moving is not that: letting a restart cover them would mean anybody losing
+a board could force a replay by sitting on their turn, which is the one thing the move clock exists
+to prevent. The branch now requires at least one blamed seat to be **absent**; a present staller
+falls through to the ordinary forfeit, identical to an individual match. The two fault modes are
+mutually exclusive by construction — `turnSeatNow()` returns `null` the instant any player is away —
+so the "one away, the other present and on the move" case is unreachable rather than merely
+untested.
 
 ---
 
@@ -152,7 +219,7 @@ predate the collision keep `export *` because renaming their constants would tou
 no benefit. Nothing outside `packages/games` imports these constants at all.
 
 **Known limitation 25 is resolved.** D-1 puts the minimum tournament at three games and the
-catalogue had two, so the create screen could not reach a legal selection. Six games, four
+catalogue had two, so the create screen could not reach a legal selection. Seven games, four
 categories, and `catalogue.test.ts` asserts the floor so it cannot quietly go back under.
 
 ---
@@ -497,11 +564,16 @@ Slice 8 adds the half that outlives the evening:
 - The session registry gained a `matchKey` and four calls. Everything else about it is unchanged:
   the clocks, the presence rules and the leave protocol were not touched.
 
-Slice 10 adds four games and nothing else to the backend:
+Slice 10 adds five games and a tournament-request flow to the backend:
 
-- **`packages/games/src/{memory,guess-my-answer,bomb-defusal,reflex}`** — a folder each, registered
-  in three lines apiece. `sessionRegistry`, `matchRunner`, `socketRegistry` and every route are
-  untouched.
+- **`packages/games/src/{memory,guess-my-answer,bomb-defusal,reflex,basketball}`** — a folder each,
+  registered in three lines apiece. `sessionRegistry`, `matchRunner`, `socketRegistry` and every
+  route are untouched by the games themselves.
+- **`modules/tournaments/tournamentRequestSweeper.ts`** plus the request branch in
+  `http/routes/tournaments.ts` — a tournament is now proposed to the partner and accepted, the same
+  shape as an individual invitation, backed by migrations `0010_tournament_requests.sql` and
+  `0011_tournament_request_status.sql`. This landed in `acd3c54` alongside Basketball and went
+  unrecorded until slice 11.
 - **`GameMeta.formatScore`** — the only change to the contract, and an optional one. It returns a
   string or null, and `formatGameScore(slug, score)` in the barrel is what the platform calls when
   it is holding an integer with no units.
@@ -510,6 +582,18 @@ Slice 10 adds four games and nothing else to the backend:
   available without a database.
 - One platform correction: `resultView` no longer calls both players the loser of a game that had
   no winner to name.
+
+Slice 11 adds no features. It adds a test lane and two corrections:
+
+- **`apps/server/src/testing/integrationHarness.ts`** and `vitest.integration.config.ts` — the
+  opt-in real-Postgres lane, plus five `*.integration.test.ts` suites under
+  `modules/sessions/games/`. `npm test` excludes them so it still runs with no database.
+- **A lazy clock.** `sessionRegistry` and `matchRunner` now resolve `Date.now` at call time rather
+  than capturing it when the factory runs. Behaviour-identical in production; it removes a footgun
+  that every test with fake timers would otherwise have had to work around.
+- **`resolveClock` distinguishes a stall from a disconnect.** In a tournament, only an *absent*
+  blamed seat restarts the game; a present player who stops moving forfeits, exactly as in an
+  individual match.
 
 ### Database
 
@@ -673,6 +757,45 @@ looked like it was in charge. Renamed; `duration-quick` and `duration-soft` now 
 ## Verified, with evidence
 
 Not "it compiles" — these were actually run.
+
+> **On reproducibility.** The real-Postgres runs described below for slices 5–9 were driven by
+> scripts that were never committed — 226 files had existed in this repository before slice 11 and
+> none of them was an integration harness. Those results were true when they were run and cannot be
+> re-run. Slice 11 adds `apps/server/src/testing/integrationHarness.ts` and the
+> `*.integration.test.ts` lane, so everything claimed from here on can be checked by anyone with
+> `npm run test:integration`.
+
+- **25 integration checks in 6 files against real Postgres** (`npm run test:integration`, 45.7s),
+  each one seeding two throwaway Supabase auth users, pairing them into a real couple, playing
+  through the real `SessionRegistry` and the real `matchRecorder`, and deleting every trace on the
+  way out:
+  - the harness itself proves what it claims — two real users in one couple, a clean slate with a
+    lifetime row at zero, and **no residue after `dispose()`**, checked on a fresh connection
+    opened after the pool was closed;
+  - **Memory** withholds an unearned face-down card from a frame that actually crossed the socket,
+    reveals a face only to the seat that turned it and only while it is up, and is recorded as
+    **competitive** despite being catalogued as casual;
+  - **Guess My Answer** names nobody on the move while both are deciding, tells the partner an
+    answer landed **without telling them what it was**, and records a social match with no winner
+    and no competitive counter;
+  - **Bomb Defusal** freezes the fuse across a real disconnect and hands it back intact, enforces
+    the expert/defuser split through the real user→seat→role resolution, and records a cooperative
+    ending as played and nothing more;
+  - **Reflex** gives both runners the identical hazard schedule, **stops game time while somebody is
+    away** and resumes with what was left, refuses a move once a partner is away, and records the
+    duration score against the right game;
+  - **Basketball** refuses an out-of-range angle and an out-of-turn shot, then plays all twenty
+    shots to a completed competitive match with **zero timeouts** — which is what rules out a
+    forfeit masquerading as a game.
+- **The tournament stalling bug was reproduced before it was fixed.** Against the old code the new
+  test did not merely record the wrong outcome; it threw `SessionError: That session has ended`,
+  because `resolveClock` called `endSession` and forgot the session before working out who was at
+  fault. Both halves are now covered: a present staller forfeits (`played: true`, `byForfeit`), and
+  a genuine drop still restarts (`played: false`, session torn down).
+- **All twelve migrations confirmed applied** by querying `public.schema_migrations` on the live
+  project, with seven games `enabled` in Postgres and the other ten catalogue rows deliberately
+  `false`.
+- Typecheck, lint, **624 tests** and both production builds green (`npm run verify`).
 
 Slice 10's evidence is thinner than earlier slices' and worth being plain about: there was no
 database and no browser available, so what follows is unit coverage, the compiler, and the built
@@ -1015,7 +1138,7 @@ output — not two people playing. Limitations 28–32 say what that leaves.
    after finishing a game in a browser. It shares this with slice 7c, and the two are the same
    sitting: two Google accounts, two browser profiles, one evening.
 
-25. **Resolved in slice 10: six games have modules**, so the create screen can reach D-1's minimum
+25. **Resolved in slice 10: seven games have modules**, so the create screen can reach D-1's minimum
    of three and the couple can actually start a tournament. `catalogue.test.ts` asserts the floor so
    it cannot quietly go back under. Still unproved by hand — see limitation 31.
 26. **Slice 9 has not been through a two-account browser run.** The sequencing is covered
@@ -1029,22 +1152,25 @@ output — not two people playing. Limitations 28–32 say what that leaves.
    latest attempt, and `matches.tournament_id` is the authoritative link in the direction reads
    actually want.
 
-28. **`0009` has been written but not applied.** There is no database reachable from the machine
-   this slice was written on, so the migration has not run and the four new games are `enabled` in
-   a file rather than in Postgres. Until it is applied the catalogue shows them as "soon" and the
-   server refuses an invitation to them, which is the correct failure — `games.enabled` gating the
-   invitation is exactly what stops a Play button opening a lobby that cannot start. Run
-   `npm run db:migrate`.
+28. **Resolved in slice 11: all twelve migrations are applied**, confirmed by querying
+   `public.schema_migrations` on the live project. Seven games are `enabled` in Postgres —
+   Basketball, Bomb Defusal, Four in a Row, Guess My Answer, Memory, Reaction Speed and Reflex — and
+   the other ten catalogue entries are deliberately still `false`. One wart survives:
+   `0009_basketball.sql` and `0009_slice_10_games.sql` **share a prefix** and are ordered only by
+   the runner's alphabetical tie-break (`basketball` sorts before `slice_10`). They are independent,
+   so the order does not matter today, but the next migration must not reuse `0009` and any future
+   pair that does share a prefix will be ordered by accident rather than intent.
 
-29. **None of the four new games has been played by two people.** Every rulebook has full unit
-   coverage — 105 new checks across the four, including the secrecy of Memory's layout, the fork in
-   Bomb Defusal's views, and Reflex's grace window and paused clock — and the built bundles were
-   grepped to confirm no rulebook or manual text reaches the browser. What has *not* happened is the
-   thing every earlier game got: two sockets against a real registry, and two browser profiles. In
-   particular nothing has exercised these four through `sessionRegistry` at all, so the paths that
-   are the platform's rather than the game's — `pause`/`resume` being called on a real disconnect,
-   the move clock reading `turnOf`, `matchRecorder` writing a `memory` result as competitive — are
-   covered by the platform's own tests with other games and by inference here.
+29. **None of the newer games has been played by two people in a browser.** Half of this is fixed:
+   slice 11 put Memory, Guess My Answer, Bomb Defusal, Reflex and Basketball through the real
+   `sessionRegistry` against real Postgres, so the platform paths this entry used to worry about are
+   no longer inferred — `pause`/`resume` on a real disconnect, the move clock reading `turnOf`, and
+   `matchRecorder` writing a `memory` result as competitive are each asserted by a test that
+   executes SQL. What remains is the other half: **two browser profiles.** Nobody has watched a
+   Phaser scene render, tapped a hazard lane with a thumb, or found out whether Reflex's 150ms step
+   feels fair. Reaction Speed and Four in a Row still have no integration suite of their own — they
+   are the two games the earlier uncommitted scripts covered, so they are the least likely to be
+   broken and the most annoying to have no reproducible proof for.
 
 30. **Reflex's canvas has never been rendered.** The scene compiles, Phaser resolves, the chunk is
    confirmed lazy, and the rules it draws are fully tested — but nobody has watched a hazard fall.
@@ -1055,8 +1181,12 @@ output — not two people playing. Limitations 28–32 say what that leaves.
    that reason.
 
 31. **A tournament still has not been played.** The blocker (limitation 25) is gone, but slice 9's
-   own outstanding browser run now has six games to choose from rather than none. It joins slices
-   7c, 8 and 10 in the same sitting: two Google accounts, two browser profiles, one evening.
+   own outstanding browser run now has seven games to choose from rather than none. It joins slices
+   7c, 8, 10 and 11 in the same sitting: two Google accounts, two browser profiles, one evening.
+   Note that the move-clock rule inside a tournament **changed in slice 11**: a player who is
+   present and simply stops moving now forfeits, and only a genuine absence still restarts the game.
+   Both halves are covered by unit tests, but the evening is what will say whether a 15-second
+   move window feels like enough time on a phone.
 
 32. **The Docker image fix has not been rebuilt.** `apps/server/Dockerfile` now copies
    `packages/games`, which is what it needed to build at all since slice 7 — but Docker was not
@@ -1072,12 +1202,22 @@ output — not two people playing. Limitations 28–32 say what that leaves.
    whole thing rather than a patch" is a platform rule worth more than the bandwidth. Revisit if
    anybody ever plays this on a metered connection.
 
-33. **A cooperative loss reads as "Played together 💞".** P-3 gives a non-competitive match no
+34. **A cooperative loss reads as "Played together 💞".** P-3 gives a non-competitive match no
    winner, so the results banner says the same friendly thing whether the bomb was defused or went
    off. The game's own view stays on screen underneath and says BOOM, so nothing is actually
    misreported — but the banner is the biggest thing on the screen and it is the least informative.
    Fixing it means a shared outcome on `MatchResultView`, which is a platform change for one
    sentence and was not worth making blind.
+
+35. **`invitations.test.ts` is load-sensitive and can flake the gate.** Its 24 tests each make a
+   real loopback `fetch` against a real listening server, on vitest's default 5-second budget. One
+   `npm run verify` in five failed with `Test timed out in 5000ms` on
+   `withdrawing an invitation > clears it from both screens at once`; the same file passed 3/3 in
+   isolation and the full suite passed 3/3 immediately afterwards, so this is a timing budget under
+   machine load and not a race in the route. The file predates slice 11 (last touched in `e1769ab`)
+   and was left alone deliberately rather than fixed inside a documentation task. The fix, when
+   somebody takes it: give this file its own `testTimeout`, or start the server once per file
+   instead of per test.
 
 ---
 
