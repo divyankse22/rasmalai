@@ -6,8 +6,7 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: after slice 12 — Would You Rather, the first game where a player chooses the
-question.
+Last updated: after slice 13 — Word Game, and the first dictionary.
 
 ---
 
@@ -29,10 +28,11 @@ question.
 | 10 | Memory, Guess My Answer, Bomb Defusal, Reflex (Phaser), Basketball (Phaser); counter-proposal UI; score units; tournament requests | **done**, automated gate green; two-account browser run outstanding |
 | 11 | Integration lane: five games through the real registry against real Postgres; tournament stalling rule | **done, verified** against the live database |
 | 12 | Would You Rather: asymmetric ask/answer/predict, 60-dilemma deck, competitive scoring | **done**, automated gate green; two-account browser run outstanding |
-| 13+ | Word Game, Boat Escape, mobile polish, deployment | not started |
+| 13 | Word Game: SCOWL dictionary, raid stealing, golden tile, comeback rule | **done**, automated gate green; two-account browser run outstanding |
+| 14+ | Boat Escape, mobile polish, deployment | not started |
 
-Gate at the time of writing: **697 tests passing**, typecheck, lint and both builds green
-(`npm run verify`), plus **30 integration checks in 7 files** against real Postgres
+Gate at the time of writing: **738 tests passing**, typecheck, lint and both builds green
+(`npm run verify`), plus **34 integration checks in 8 files** against real Postgres
 (`npm run test:integration`) — real matches played through the real session registry by throwaway
 Supabase accounts, created, paired and deleted by the run itself.
 
@@ -41,6 +41,55 @@ Answer, Bomb Defusal, Reflex and Basketball through `sessionRegistry` against re
 twelve migrations are applied. What is still outstanding for slices 7c and 8–11 alike is the
 **two-account browser run**: nobody has played any of these games in two browser profiles. See known
 limitations 29–31.
+
+---
+
+## Slice 13: the first game that needs a dictionary
+
+Nine games. Every rulebook before this one was self-contained — the rules were the whole truth, and
+a test could replay a match from first principles. Word Game has to ask something outside itself
+whether a word is a word.
+
+**The licence was the gating decision, and it eliminated the obvious answer.** The natural way to
+stop a word game feeling broken is to filter a big list by word frequency, and every convenient
+frequency source — `google-10000-english` and its forks — derives from the LDC-distributed Google
+corpus and claims only *"educational and personal/research use… and US fair use doctrine."* That is
+not a licence to redistribute in a product, so none of it is here. **SCOWL** avoided the question
+entirely: its size bands are already a commonness ranking, so no second dataset was needed. Its
+licence is permissive, the notice is vendored beside the data, and `scripts/dictionary/` rebuilds
+the whole thing reproducibly.
+
+Size 50, because SCOWL's own documentation says size 80 is "all the strange and unusual words people
+like to use in word games such as Scrabble" — `qat`, `zax`, `cwm`. After filtering to a-z, three to
+twelve letters, and excluding the proper-name, abbreviation and contraction lists structurally,
+**58,252 words**. Twenty-one more were subtracted by a blocklist: size 50 is mainstream English and
+therefore contains slurs, because a spell checker has to know them and a game does not. Mild
+profanity was deliberately kept.
+
+**The dictionary ships as a TypeScript module, not a data file.** tsup bundles `@rasmalai/games`
+into `apps/server/dist`, so a loose `.txt` would not survive the bundle and reading one at runtime
+would need a path that differs between the tests, the dev server and the container. 525KB of words
+gzipped and base64-encoded is 204KB of source, decoded once on first use. It sits behind the same
+three fences as Would You Rather's deck — no browser-reachable import, the package `exports` map,
+and an eslint ban — and the third one proved itself immediately: the integration test's first
+attempt to import it by package specifier failed, exactly as intended, and now reaches source by
+relative path rather than the fence being widened.
+
+**No move clock, deliberately.** `turnOf` returns null. Naming a seat would put it on the platform's
+120-second window, and since slice 11 a present player who runs that out forfeits — but hunting for
+a word in twelve letters legitimately takes longer than two minutes. The 120 seconds still governs
+an actual disconnect through `reconnectPolicy`, which is a different mechanism; only one of the two
+was relaxed. A forty-turn cap is what keeps the match finite in the absence of a clock.
+
+A word that is not a word costs the player **nothing but the attempt** — they are told, and the turn
+stays theirs. The pool is public and the dictionary is not, so a player cannot know whether `snarf`
+is in it, and losing a turn to a guess would make the game about memorising a word list.
+
+**Two seams were left open on request**, and both are named functions with a documented contract
+rather than plugin machinery: `mayAct` is the entire turn rule, so real-time claiming is a one-line
+change; `raidThreshold` and `applyRaid` are the entire stealing rule, so a Snatch-style steal
+replaces two functions. `ClaimAction.steal` already names a word rather than a letter, which is the
+shape Snatch needs. `docs/16_WORD_GAME.md` has the rules, the dictionary pipeline and both seams.
 
 ---
 
@@ -858,7 +907,12 @@ Not "it compiles" — these were actually run.
   Asker's carries no answer until their prediction lands, and a match filed `social` records a real
   `winner_user_id` with a 3–0 scoreline and increments `competitive_games` — which is the half
   `catalogue.test.ts` cannot reach, because it compares two strings and this compares behaviour.
-- Typecheck, lint, **697 tests** and both production builds green (`npm run verify`).
+- **Slice 13: 41 unit checks and 4 integration checks for Word Game.** Through the real registry
+  against real Postgres: the dictionary is enforced **on the server** across a real submission — the
+  browser has no dictionary at all, so the decision can only have been the server's — whose turn it
+  is survives the registry's user-id-to-seat resolution, and a match the catalogue files `casual`
+  records a real `winner_user_id` and increments `competitive_games`.
+- Typecheck, lint, **738 tests** and both production builds green (`npm run verify`).
 - **Coverage is now measured rather than guessed** (`npm run test:coverage`): 62.6% of lines and
   **91.9% of branches** in the unit lane. The line figure is held down almost entirely by things
   that are deliberately not unit-tested, and the honest reading is the branch number. What is

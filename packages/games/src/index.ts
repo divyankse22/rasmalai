@@ -123,6 +123,26 @@ export type {
   WouldYouRatherView,
 } from './would-you-rather/protocol';
 
+export { meta as wordGameMeta } from './word-game/meta';
+export {
+  POOL_SIZE as WORD_GAME_POOL_SIZE,
+  MIN_WORD as WORD_GAME_MIN_WORD,
+  RAID_LETTERS as WORD_GAME_RAID_LETTERS,
+  RAID_LETTERS_BEHIND as WORD_GAME_RAID_LETTERS_BEHIND,
+  RAID_BONUS as WORD_GAME_RAID_BONUS,
+  GOLDEN_MULTIPLIER as WORD_GAME_GOLDEN_MULTIPLIER,
+  MAX_TURNS_EACH as WORD_GAME_MAX_TURNS_EACH,
+} from './word-game/protocol';
+export type {
+  ClaimAction,
+  OwnedWord,
+  PassAction,
+  Tile as WordGameTile,
+  WordGameAction,
+  WordGameView,
+  WordRejection,
+} from './word-game/protocol';
+
 import type { GameMeta } from './contract';
 import { meta as basketball } from './basketball/meta';
 import { meta as bombDefusal } from './bomb-defusal/meta';
@@ -132,6 +152,7 @@ import { meta as memory } from './memory/meta';
 import { meta as reflex } from './reflex/meta';
 import { meta as reactionSpeed } from './reaction-speed/meta';
 import { meta as wouldYouRather } from './would-you-rather/meta';
+import { meta as wordGame } from './word-game/meta';
 
 /** Every game that has a module behind it, keyed by the slug in `public.games`. */
 export const GAME_META: Readonly<Record<string, GameMeta>> = {
@@ -143,6 +164,7 @@ export const GAME_META: Readonly<Record<string, GameMeta>> = {
   [reflex.slug]: reflex,
   [basketball.slug]: basketball,
   [wouldYouRather.slug]: wouldYouRather,
+  [wordGame.slug]: wordGame,
 };
 
 export function findGameMeta(slug: string): GameMeta | null {

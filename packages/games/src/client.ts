@@ -33,6 +33,7 @@ const RENDERERS: Readonly<Record<string, GameLoader>> = {
   reflex: () => import('./reflex/client'),
   basketball: () => import('./basketball/client'),
   'would-you-rather': () => import('./would-you-rather/client'),
+  'word-game': () => import('./word-game/client'),
 };
 
 export function findGameRenderer(slug: string): GameLoader | null {

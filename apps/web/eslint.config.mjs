@@ -20,7 +20,7 @@ const config = [
         {
           patterns: [
             {
-              group: ['@rasmalai/games/server', '@rasmalai/games/*/server', '@rasmalai/games/*/deck'],
+              group: ['@rasmalai/games/server', '@rasmalai/games/*/server', '@rasmalai/games/*/deck', '@rasmalai/games/*/dictionary'],
               message:
                 'Authoritative game rules are server-only. Import @rasmalai/games (metadata and protocol) or @rasmalai/games/client (renderers).',
             },
