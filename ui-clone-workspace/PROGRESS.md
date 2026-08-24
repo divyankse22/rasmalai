@@ -117,7 +117,31 @@ Governing rule for every test in this phase:
 > or computed colours. These files must stay byte-identical through the restyle — a test that
 > needs editing to go green means behaviour moved.
 
-Still to write: Card, Field, Stat, PersonName, AppNav, PartnerPresence, OnboardingWizard,
+**Batch 1 — primitives ✅ COMPLETE** (commit below). 40 web tests across 5 files:
+- `Button.test.tsx` (11) — role/name, onClick, disabled blocks onClick, all 3 variants leave
+  role+name unchanged, attribute forwarding, and the invariant that **ButtonLink stays an `<a>`**.
+- `Card.test.tsx` (5) — children render, div attrs + onClick forward, **no implicit ARIA role**,
+  caller className survives.
+- `Field.test.tsx` (10) — label↔control association, onChange values, error announced via
+  `role="alert"` **and** `aria-invalid`, no error → neither; options render label-as-text /
+  value-as-value; attribute forwarding.
+- `PersonName.test.tsx` (6) — `nameTone` mapping incl. the undefined fallback, and that two people
+  never share a tone.
+- `Stat.test.tsx` (8) — value/label/hint, node values, VersusStat DOM order (yours, label, theirs)
+  and tinting **by owner not by position**, including reversed genders and the ink fallback.
+
+### 🔎 Finding: form errors are folded into the accessible name
+`Field.tsx`'s `Wrapper` renders the error `<span>` **inside** the `<label>`. So an errored field's
+accessible name becomes `"Your nickname That name is taken."` rather than `"Your nickname"` —
+`getByLabelText('Your nickname')` stops matching exactly the moment an error appears.
+
+Not broken (a screen reader does announce the error), but the conventional wiring is
+`aria-describedby`, which keeps the name stable and still announces it. **Pre-existing, unrelated
+to the restyle, and deliberately NOT fixed here** — a characterization test now pins the current
+behaviour so that fixing it later is a visible, deliberate change. See
+`Field.test.tsx > currently folds the error text into the accessible name`.
+
+Still to write: AppNav, PartnerPresence, OnboardingWizard,
 PairingPanel, InvitationCentre, TournamentRequestCentre, SessionWatch, PlayScreen (split by state),
 TournamentScreen/Scoreboard, CreateTournamentModal, GameCatalogue, InviteButton, CoupleHeader,
 PlayTeaser, StatsPanels, TournamentCard, GameMount, GameErrorBoundary.
