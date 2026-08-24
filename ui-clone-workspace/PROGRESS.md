@@ -159,6 +159,27 @@ Writing these caught that `getByRole('dialog')` cannot see the closed drawer at 
 + `inert` are doing their job, so role queries need `{ hidden: true }` to reach it in that state.
 Component behaviour is correct; recorded because it is easy to misread as a test-harness problem.
 
+**Batch 3 — dashboard (part 1) ✅ COMPLETE.** 22 more web tests across 3 files:
+- `CoupleHeader.test.tsx` (10) — both people named in the `<h1>`; **the partner is shown by the
+  viewer's own private label, never by the partner's own nickname** (P-1); day/days singular;
+  all four `locationType` mappings incl. `prefer_not_to_say` rendering nothing; avatars and the
+  heart stay `aria-hidden`.
+- `PlayTeaser.test.tsx` (5) — heading, CTA links to `/games`, the "+N more" count is right at
+  PREVIEW=4, no count when everything fits, and it still offers the way in with zero games.
+- `InviteButton.test.tsx` (9) — accessible name names the game; posts the right slug; refreshes on
+  success; surfaces the server's reason via `role="alert"`; disables and says "Asking…" while
+  in flight; and is **not left stuck busy** after an early return.
+
+### 🔎 Pinned rule: offline vs unknown presence
+`InviteButton` treats `online === false` and `online === null` differently, and it matters:
+- `false` → refuse early. The invitation would hold the couple's one slot for five minutes and
+  then die unseen.
+- `null` → **send anyway.** Our own connection is down and we cannot tell; not being able to tell
+  is no reason to stop somebody playing.
+
+Collapsing these into one `if (!online)` is an easy and plausible-looking mistake, so both
+directions now have their own test.
+
 Still to write: OnboardingWizard,
 PairingPanel, InvitationCentre, TournamentRequestCentre, SessionWatch, PlayScreen (split by state),
 TournamentScreen/Scoreboard, CreateTournamentModal, GameCatalogue, InviteButton, CoupleHeader,
