@@ -274,6 +274,24 @@ finished. That deviates from strict test-first. It is contained, because:
 **The gate still holds: Phase 5 must not start until the characterization tests exist.** Those
 tests protect component *behaviour*, and components are exactly what Phase 5 edits.
 
+## ⏸️ RESUME HERE
+
+Last commit: `d0d0125`. Tree clean. **51 test files, 901 tests, all green** (node still 780).
+
+Phase 2b is roughly half done. Next file to write is `StatsPanels.test.tsx` — the source has just
+been read, and the behaviours worth pinning are:
+- Three panels, each an `<h2>`: "This week", "Head to head", "All together".
+- **Empty states are separate branches**, not zeroes: `lastSevenDays.gamesPlayed === 0` and
+  `competitive.gamesPlayed === 0` each render their own sentence instead of a grid of noughts.
+- `formatDuration` — under 60s as `Ns`, under an hour as `Nm`, then `Nh` alone when minutes round
+  to zero, otherwise `Nh Nm`. Worth its own describe block; it is pure and cheap to test.
+- **P-3: competitive and together stats never mix.** They are separate Cards precisely so a
+  cooperative win never looks like it beat anybody. Assert the "All together" count includes
+  non-competitive games while "Head to head" does not.
+- The partner is again shown by `viewer.partnerLabelNickname`, not the partner's own nickname.
+- `mostCompetitiveGame`, `closestMatch` and `favouriteGame` each render only when present;
+  `favouriteGame.plays` is time/times singular.
+
 ## Next actions, in order
 
 1. Finish Phase 2b — characterization tests for the components listed above. Start with the
