@@ -35,7 +35,7 @@ export function CoupleHeader({
           ❤️
         </span>
         <span
-          className="flex size-14 items-center justify-center rounded-pill bg-lilac text-3xl"
+          className="flex size-14 items-center justify-center rounded-pill bg-sky text-3xl"
           aria-hidden="true"
         >
           {avatarGlyph(partner.avatarKey)}

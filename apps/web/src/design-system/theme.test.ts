@@ -27,6 +27,8 @@ const COLOUR_TOKENS = [
   '--color-berry-deep',
   '--color-mint',
   '--color-sky',
+  '--color-blueberry',
+  '--color-blueberry-deep',
   '--color-butter',
   '--color-lilac',
   '--color-ink',

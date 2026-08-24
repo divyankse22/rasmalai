@@ -23,6 +23,8 @@
   --color-berry-deep: #d84972;
   --color-mint: #c8f0e0;
   --color-sky: #cfe6ff;
+  --color-blueberry: #3a88ee;
+  --color-blueberry-deep: #2b70ca;
   --color-butter: #ffeec2;
   --color-lilac: #e5dbff;
   --color-ink: #3d2b3a;
@@ -44,7 +46,8 @@
      Still deterministic and offline-friendly — the files are committed, so `npm run build` never
      touches the network. That was the reason for system stacks only; the reason survived, the
      system stacks did not. The old stack remains as the fallback chain. */
-  --font-display: var(--font-poppins), ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
+  --font-display:
+    var(--font-poppins), ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
   --font-body: var(--font-inter), system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 
   /* Roundness. Rasmalai still has no sharp corners, but the corners are tighter than they were:

@@ -5,8 +5,8 @@ type Variant = 'primary' | 'soft' | 'ghost';
 
 const VARIANTS: Record<Variant, string> = {
   primary: 'bg-berry text-shell active:bg-berry-deep shadow-soft',
-  soft: 'bg-blush text-ink active:bg-lilac',
-  ghost: 'bg-transparent text-muted active:bg-blush',
+  soft: 'bg-sky text-ink active:bg-blueberry-deep',
+  ghost: 'bg-transparent text-muted active:bg-sky',
 };
 
 /**

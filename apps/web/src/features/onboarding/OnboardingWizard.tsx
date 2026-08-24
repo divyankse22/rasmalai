@@ -256,7 +256,7 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
           <span
             key={candidate.id}
             className={`size-2 rounded-pill transition-colors duration-quick ${
-              i === position ? 'bg-berry' : i < position ? 'bg-lilac' : 'bg-blush'
+              i === position ? 'bg-berry' : i < position ? 'bg-blueberry' : 'bg-blush'
             }`}
           />
         ))}

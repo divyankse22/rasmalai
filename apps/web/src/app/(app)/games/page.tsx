@@ -27,7 +27,7 @@ export default async function GamesPage() {
   return (
     <main className="flex flex-col gap-5">
       <div className="flex flex-col gap-1 text-center">
-        <h1 className="font-display text-2xl font-bold text-berry">Games</h1>
+        <h1 className="font-display text-2xl font-bold text-blueberry-deep">Games</h1>
       </div>
 
       <GameCatalogue games={data.games} />

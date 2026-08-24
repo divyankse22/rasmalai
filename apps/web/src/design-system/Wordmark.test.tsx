@@ -19,7 +19,7 @@ describe('Wordmark', () => {
   it('splits the two halves so they can be coloured apart', () => {
     render(<Wordmark />);
 
-    expect(screen.getByText('Ras')).toHaveClass('text-name-male');
+    expect(screen.getByText('Ras')).toHaveClass('text-blueberry-deep');
     expect(screen.getByText('malai')).toHaveClass('text-berry');
   });
 
