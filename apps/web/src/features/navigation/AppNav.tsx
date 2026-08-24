@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { Wordmark } from '@/design-system/Wordmark';
 import { SignOutButton } from '@/features/auth/SignOutButton';
 
 /**
@@ -79,9 +80,9 @@ export function AppNav() {
 
         <Link
           href="/dashboard"
-          className="font-display text-lg font-bold text-berry transition-transform duration-quick ease-bounce active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
+          className="transition-transform duration-quick ease-bounce active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
         >
-          Rasmalai
+          <Wordmark className="text-lg" />
         </Link>
       </div>
 
@@ -111,7 +112,7 @@ export function AppNav() {
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="font-display text-xl font-bold text-berry">Rasmalai</span>
+            <Wordmark className="text-xl" />
             <button
               type="button"
               aria-label="Close menu"

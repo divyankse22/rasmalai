@@ -1,6 +1,7 @@
 import { REACTIONS } from '@rasmalai/shared';
 import { Card } from '@/design-system/Card';
 import { SignInButton } from '@/features/auth/SignInButton';
+import { Wordmark } from '@/design-system/Wordmark';
 
 const ERROR_MESSAGES: Record<string, string> = {
   declined: 'No problem — come back whenever you are ready.',
@@ -20,7 +21,9 @@ export default async function LandingPage({
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-8 px-6 py-12">
       <header className="flex flex-col items-center gap-2 text-center">
-        <h1 className="font-display text-5xl font-bold tracking-tight text-berry">Rasmalai</h1>
+        <h1>
+          <Wordmark className="text-5xl tracking-tight" />
+        </h1>
         <p className="text-lg text-muted">a tiny world for two</p>
       </header>
 

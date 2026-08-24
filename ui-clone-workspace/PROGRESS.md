@@ -274,9 +274,41 @@ finished. That deviates from strict test-first. It is contained, because:
 **The gate still holds: Phase 5 must not start until the characterization tests exist.** Those
 tests protect component *behaviour*, and components are exactly what Phase 5 edits.
 
+## Wordmark — "Ras" in blue ✅ DONE
+
+Requested directly. New `apps/web/src/design-system/Wordmark.tsx` renders **"Ras" in
+`text-name-male` (#2f6fd0)** and **"malai" in `text-berry`**, replacing the wordmark at all three
+sites: the header link and drawer heading in `AppNav.tsx`, and the landing `<h1>` in `app/page.tsx`.
+One component rather than three copies — the sizes already differ (text-lg / text-xl / text-5xl).
+
+**Why `--color-name-male` and not `--color-sky`:** sky (#cfe6ff) is a pale pastel *fill* colour and
+sits at roughly 1.3:1 on cream — effectively invisible as text. `--color-name-male` is the palette's
+only blue documented as "darkened enough to stay readable as body text on cream", at roughly 4.4:1,
+which clears AA for large text (the wordmark is bold at 18px+ everywhere it appears).
+
+⚠️ **Semantic coupling to watch:** `--color-name-male` means "the male partner's name colour". The
+wordmark now depends on it, so retuning that token for name legibility would silently restyle the
+brand. If that becomes a problem, promote it to its own `--color-*` brand token — note that doing so
+requires updating the frozen token list in `theme.test.ts`, which is the guard working as intended.
+
+Tests: `Wordmark.test.tsx` (3) asserts raw `textContent` is exactly `"Rasmalai"` — a normalizing
+matcher would collapse the very stray space the test exists to catch — plus an `AppNav` test that
+the header link's **accessible name is still the single word "Rasmalai"**, not "Ras malai".
+
+## ⚠️ Watch item: one unreproduced failure in a combined run
+
+A single full-suite run reported `1 failed | 904 passed (905)`. The failing test name was not
+captured before it disappeared. Both projects pass in isolation (node 40 files / 804 tests, web
+12 / 101), and **three consecutive full runs afterwards were clean at 905/905**.
+
+Most likely the condition `vitest.config.ts` already documents: 138 server tests bind a real TCP
+listener each, and adding a second vitest project raises machine load, so a `listen()` plus round
+trip can occasionally approach the timeout. **Unconfirmed.** If it recurs, capture the test name —
+and note the node project's `testTimeout` is 20s and can be raised.
+
 ## ⏸️ RESUME HERE
 
-Last commit: `d0d0125`. Tree clean. **51 test files, 901 tests, all green** (node still 780).
+Last commit: see `git log`. Tree clean. **52 test files, 905 tests, all green** (node 804, web 101).
 
 Phase 2b is roughly half done. Next file to write is `StatsPanels.test.tsx` — the source has just
 been read, and the behaviours worth pinning are:

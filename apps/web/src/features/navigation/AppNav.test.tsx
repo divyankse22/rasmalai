@@ -37,6 +37,16 @@ describe('AppNav trigger', () => {
     expect(drawer()).toHaveAttribute('id', 'app-nav-drawer');
   });
 
+  /*
+   * The wordmark is two spans so its halves can be coloured apart. The link's accessible name must
+   * still be the single word — a stray space would make it announce as "Ras malai".
+   */
+  it('keeps the wordmark link reading as one word', () => {
+    render(<AppNav />);
+
+    expect(screen.getByRole('link', { name: 'Rasmalai' })).toHaveAttribute('href', '/dashboard');
+  });
+
   it('marks the closed drawer inert and hidden from assistive technology', () => {
     render(<AppNav />);
 
