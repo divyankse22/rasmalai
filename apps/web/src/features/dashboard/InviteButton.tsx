@@ -49,9 +49,9 @@ export function InviteButton({ gameSlug, gameName }: { gameSlug: string; gameNam
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex w-full flex-col gap-1">
       <Button
-        className="min-h-9 px-4 text-sm"
+        className="w-full"
         disabled={busy}
         aria-label={`Ask them to play ${gameName}`}
         onClick={() => void invite()}
@@ -59,7 +59,7 @@ export function InviteButton({ gameSlug, gameName }: { gameSlug: string; gameNam
         {busy ? 'Asking…' : 'Play'}
       </Button>
       {error && (
-        <p className="max-w-40 text-right text-xs text-berry" role="alert">
+        <p className="text-center text-xs text-berry" role="alert">
           {error}
         </p>
       )}

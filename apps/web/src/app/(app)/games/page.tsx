@@ -28,9 +28,6 @@ export default async function GamesPage() {
     <main className="flex flex-col gap-5">
       <div className="flex flex-col gap-1 text-center">
         <h1 className="font-display text-2xl font-bold text-berry">Games</h1>
-        <p className="text-sm text-muted">
-          Everything is unlocked. The ones marked <em>soon</em> are still being built.
-        </p>
       </div>
 
       <GameCatalogue games={data.games} />

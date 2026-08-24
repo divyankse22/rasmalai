@@ -1,4 +1,3 @@
-import { REACTIONS } from '@rasmalai/shared';
 import { Card } from '@/design-system/Card';
 import { SignInButton } from '@/features/auth/SignInButton';
 import { Wordmark } from '@/design-system/Wordmark';
@@ -29,7 +28,7 @@ export default async function LandingPage({
 
       <Card className="flex w-full flex-col items-center gap-4 text-center">
         <p className="text-balance text-ink">
-          Play quick, silly games with your favourite person — wherever they are.
+          Your favourite person is just a game away
         </p>
 
         <SignInButton />
@@ -40,12 +39,6 @@ export default async function LandingPage({
           </p>
         )}
       </Card>
-
-      <ul className="flex items-center gap-3 text-2xl" aria-label="in-game reactions">
-        {REACTIONS.map((reaction) => (
-          <li key={reaction}>{reaction}</li>
-        ))}
-      </ul>
     </main>
   );
 }
