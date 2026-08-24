@@ -180,6 +180,20 @@ Component behaviour is correct; recorded because it is easy to misread as a test
 Collapsing these into one `if (!online)` is an easy and plausible-looking mistake, so both
 directions now have their own test.
 
+**Batch 4 — game catalogue ✅ COMPLETE.** 13 more web tests:
+- `GameCatalogue.test.tsx` (13) — categories appear only when they have games and each game files
+  under its own; every game is named and described; **an unbuilt game is listed and marked "soon"
+  rather than hidden, and offers no way to start** (`enabled` means the module exists, not
+  progression — everything is unlocked in V1); history appears only after the first play, with
+  play/plays singular, the head-to-head figure, draws mentioned only when non-zero, and the best
+  score omitted when the game has none.
+
+`InviteButton` is stubbed here so the assertion is about the catalogue's own decision — offer it or
+don't — rather than re-testing the button, which owns its own file.
+
+Note: `yourBestScore` is `null`-checked rather than falsy-checked, because **zero is a real score**.
+The test pins the null case so a later `if (!best)` refactor fails loudly.
+
 Still to write: OnboardingWizard,
 PairingPanel, InvitationCentre, TournamentRequestCentre, SessionWatch, PlayScreen (split by state),
 TournamentScreen/Scoreboard, CreateTournamentModal, GameCatalogue, InviteButton, CoupleHeader,
