@@ -141,7 +141,25 @@ to the restyle, and deliberately NOT fixed here** — a characterization test no
 behaviour so that fixing it later is a visible, deliberate change. See
 `Field.test.tsx > currently folds the error text into the accessible name`.
 
-Still to write: AppNav, PartnerPresence, OnboardingWizard,
+**Batch 2 — navigation + presence ✅ COMPLETE.** 22 more web tests across 2 files:
+- `AppNav.test.tsx` (15) — trigger `aria-expanded`/`aria-controls`, closed drawer is inert and
+  **genuinely absent from the accessibility tree**, opening exposes it, `aria-modal`, focus moves
+  into the panel, body scroll locks on open and is **restored to its previous value** on close,
+  every section renders with label/href/blurb, `aria-current="page"` follows the route, and all
+  **three dismissal routes** (Escape, close button, backdrop) plus closing on a route change.
+- `PartnerPresence.test.tsx` (7) — renders nothing without a partner; `role="status"` +
+  `aria-live="polite"`; the three states each say their word in the accessible name; **`null` stays
+  "checking" and never collapses into "offline"**; decorative glyph and dot stay `aria-hidden`.
+
+`PartnerPresence.test.tsx` is the app's guard for the docs/06 rule that colour is never the only
+signal — presence is a coloured dot, and the word for the colour lives in the accessible name.
+
+### 🔎 Note: the closed drawer really is removed from the a11y tree
+Writing these caught that `getByRole('dialog')` cannot see the closed drawer at all — `aria-hidden`
++ `inert` are doing their job, so role queries need `{ hidden: true }` to reach it in that state.
+Component behaviour is correct; recorded because it is easy to misread as a test-harness problem.
+
+Still to write: OnboardingWizard,
 PairingPanel, InvitationCentre, TournamentRequestCentre, SessionWatch, PlayScreen (split by state),
 TournamentScreen/Scoreboard, CreateTournamentModal, GameCatalogue, InviteButton, CoupleHeader,
 PlayTeaser, StatsPanels, TournamentCard, GameMount, GameErrorBoundary.
