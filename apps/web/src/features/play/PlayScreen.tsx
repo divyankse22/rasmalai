@@ -21,11 +21,9 @@ import { Card } from '@/design-system/Card';
 import { PersonName } from '@/design-system/PersonName';
 import { gameGlyph } from '@/features/dashboard/gameGlyphs';
 import { avatarGlyph } from '@/features/onboarding/avatars';
+import { RETURN_DELAY_MS, endingMessage, returnPathFor } from '@/features/play/sessionEnding';
 import { formatClock, useCountdown } from '@/features/play/useCountdown';
-import {
-  TournamentFinale,
-  TournamentScoreboard,
-} from '@/features/tournament/TournamentScoreboard';
+import { TournamentFinale, TournamentScoreboard } from '@/features/tournament/TournamentScoreboard';
 import { GameMount } from '@/games/GameMount';
 import { useRealtime, useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
@@ -112,8 +110,8 @@ function ResultBanner({ result, partner }: { result: MatchResultView; partner: S
         <p className="text-sm text-muted">
           {result.outcome === 'won' ? (
             <>
-              This one goes to you.{' '}
-              <PersonName name={partner.nickname} gender={partner.gender} /> was away too long.
+              This one goes to you. <PersonName name={partner.nickname} gender={partner.gender} />{' '}
+              was away too long.
             </>
           ) : (
             <>
@@ -156,6 +154,9 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   const { send, status } = useRealtime();
   const [session, setSession] = useState<SessionView | null>(null);
   const [ended, setEnded] = useState<string | null>(null);
+  /** Where an ended session puts you, and when. Both null until there is an ending to leave. */
+  const [returnTo, setReturnTo] = useState<string | null>(null);
+  const [returnAt, setReturnAt] = useState<number | null>(null);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
   /** The partner's last `game.event`. Opaque to this screen — only the game itself reads it. */
@@ -163,6 +164,7 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
 
   const countdown = useCountdown(session?.startsAt ?? null);
   const moveSeconds = useCountdown(session?.turnDeadline ?? null);
+  const returnSeconds = useCountdown(returnAt);
 
   /** Asks the server where things stand. The answer is the only version that counts. */
   const join = useCallback(() => {
@@ -187,6 +189,19 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     sendRef.current = send;
   }, [send]);
+
+  /**
+   * The last view we held, for the listener to read without depending on it.
+   *
+   * An ending needs to know whether this was a tournament game to decide where to send you, and the
+   * frame that carries the ending cannot always answer: a series the engine has finished with is
+   * dropped from its live map, so `session.tournament` comes back null on the very frame that most
+   * needs it. What the screen was showing a moment earlier is the reliable answer.
+   */
+  const sessionRef = useRef<SessionView | null>(null);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   //
   // Not sent once this session is over: there is nothing left to leave, and the frame would come
@@ -249,15 +264,55 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
       return;
     }
 
+    endedRef.current = true;
     send(EVENTS.lobby.leave, { sessionId });
-    router.push('/dashboard');
-  }, [send, sessionId, router, session?.phase]);
+    // Putting a series down (D-5) belongs on the series card, next to the clock it now runs on and
+    // the button that picks it up again.
+    router.push(returnPathFor(session?.tournament));
+  }, [send, sessionId, router, session?.phase, session?.tournament]);
 
-  /** This game is over, for whatever reason. Says so, and stops talking to the server about it. */
-  const finish = useCallback((message: string) => {
+  /**
+   * This game is over, for whatever reason. Says so, stops talking to the server about it, and
+   * starts the short walk back.
+   *
+   * First call wins. A decline says so locally for an instant answer, and the `lobby.ended` frame
+   * confirming it lands a millisecond later with a blunter sentence — the first one is the one that
+   * knows why, so it keeps the screen.
+   */
+  const finish = useCallback((message: string, destination: string) => {
+    if (endedRef.current) return;
     endedRef.current = true;
     setEnded(message);
+    setReturnTo(destination);
+    setReturnAt(Date.now() + RETURN_DELAY_MS);
   }, []);
+
+  /**
+   * An ending is not a place to stand.
+   *
+   * Two seconds is long enough to read one sentence and short enough that nobody has to find a
+   * button to leave a game that is already over. `Go now` skips it, and `returnTo` going back to
+   * null cancels it — which is what stops a tournament moving to its next game from being undone by
+   * a redirect armed a moment earlier.
+   */
+  useEffect(() => {
+    if (!returnTo) return;
+    const timer = setTimeout(() => router.push(returnTo), RETURN_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [returnTo, router]);
+
+  /**
+   * "No, thanks."
+   *
+   * A rematch has no protocol of its own — offering one is readying up on a finished session, so
+   * refusing one is leaving it, and leaving a match that is already over needs nobody's agreement
+   * and no second confirmation. Said locally as well as sent, so the answer is on screen before the
+   * round trip: a button that appears to do nothing is the whole reason this exists.
+   */
+  const declineRematch = useCallback(() => {
+    send(EVENTS.lobby.leave, { sessionId });
+    finish('No rematch — heading back.', '/dashboard');
+  }, [send, sessionId, finish]);
 
   useRealtimeEvent(
     useCallback(
@@ -270,17 +325,12 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         }
 
         if (envelope.type === EVENTS.lobby.ended) {
-          const { session: next, reason, byUserId } = envelope.payload as SessionEndedPayload;
-          if (next && next.id !== sessionId) return;
+          const payload = envelope.payload as SessionEndedPayload;
+          if (payload.session && payload.session.id !== sessionId) return;
 
           finish(
-            reason === 'left'
-              ? byUserId === next?.you.userId
-                ? 'You left the game.'
-                : `${next?.partner.nickname ?? 'They'} left the game.`
-              : reason === 'server_stopped'
-                ? 'Rasmalai restarted, so the game stopped. Nothing was lost but this round.'
-                : 'Neither of you made it back in time, so this one goes to nobody.',
+            endingMessage(payload),
+            returnPathFor(payload.session?.tournament ?? sessionRef.current?.tournament),
           );
           return;
         }
@@ -292,6 +342,10 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           const { sessionId: next } = envelope.payload as TournamentNextGamePayload;
           if (next === sessionId) return;
           endedRef.current = true;
+          // Disarms the walk back to the dashboard first. `endSession` broadcasts the ending and
+          // *then* opens the next game, so without this the redirect armed two seconds ago fires
+          // into a game the player has only just arrived in.
+          setReturnTo(null);
           router.push(`/play/${next}`);
           return;
         }
@@ -309,7 +363,9 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         ) {
           const { tournament } = envelope.payload as TournamentUpdatedPayload;
           setSession((current) =>
-            current && current.tournament?.id === tournament.id ? { ...current, tournament } : current,
+            current && current.tournament?.id === tournament.id
+              ? { ...current, tournament }
+              : current,
           );
           return;
         }
@@ -346,14 +402,19 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           if (error.sessionId !== undefined && error.sessionId !== sessionId) return;
 
           if (error.code === 'session_not_found') {
-            finish('That game is no longer running.');
+            finish(
+              'That game is no longer running.',
+              returnPathFor(sessionRef.current?.tournament),
+            );
             return;
           }
 
           // Deliberately its own message rather than sharing the one above: `not_authorized` also
           // comes back from perfectly ordinary refusals mid-match, and blanking a live game for one
           // of those would be inventing an ending.
-          if (error.code === 'not_authorized') finish('That game is not yours.');
+          if (error.code === 'not_authorized') {
+            finish('That game is not yours.', returnPathFor(sessionRef.current?.tournament));
+          }
         }
       },
       [sessionId, session?.you.userId, finish, router],
@@ -367,7 +428,12 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
           🌙
         </span>
         <p className="font-display text-lg font-semibold text-ink">{ended}</p>
-        <Button onClick={() => router.push('/dashboard')}>Back to the dashboard</Button>
+        {returnSeconds !== null && (
+          <p className="text-sm text-muted" role="timer">
+            Returning in {Math.min(returnSeconds, RETURN_DELAY_MS / 1000)}…
+          </p>
+        )}
+        <Button onClick={() => router.push(returnTo ?? '/dashboard')}>Go now</Button>
       </main>
     );
   }
@@ -458,20 +524,20 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
             </div>
           ) : !tournament && session.partner.ready && !session.you.ready ? (
             /* They asked first, so this is a response rather than an offer: ✓ is the same ready
-               toggle as always, and ✗ opens the same leave-confirmation card the ghost `Leave`
-               button below does — declining a rematch is exactly that, said with one fewer click
-               to find the button than reading the sentence below and going looking for it. */
+               toggle as always, and ✗ closes the session then and there. Both answers land where
+               the question was asked — an ✗ that only revealed a confirmation card down in the
+               page footer, below the whole finished board, read as a button that did nothing. */
             <div className="mt-2 flex w-full flex-col items-center gap-1">
               <p className="text-xs text-muted">
-                <PersonName name={session.partner.nickname} gender={session.partner.gender} />{' '}
-                wants a rematch.
+                <PersonName name={session.partner.nickname} gender={session.partner.gender} /> wants
+                a rematch.
               </p>
               <div className="flex w-full gap-2">
                 <Button
                   variant="soft"
                   className="flex-1"
                   aria-label="Decline the rematch"
-                  onClick={() => setConfirmingLeave(true)}
+                  onClick={declineRematch}
                 >
                   ✗
                 </Button>
@@ -568,11 +634,7 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
             <p className="text-sm text-ink">
               {matchRunning ? (
                 <>
-                  Ask{' '}
-                  <PersonName
-                    name={session.partner.nickname}
-                    gender={session.partner.gender}
-                  />{' '}
+                  Ask <PersonName name={session.partner.nickname} gender={session.partner.gender} />{' '}
                   to stop here? Nobody wins or loses if they agree.
                 </>
               ) : tournament && !seriesOver ? (

@@ -12,23 +12,20 @@ import {
 } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
-import { PersonName } from '@/design-system/PersonName';
-import { gameGlyph } from '@/features/dashboard/gameGlyphs';
-import { avatarGlyph } from '@/features/onboarding/avatars';
 import { usePartnerPresence } from '@/features/presence/usePartnerPresence';
-import { formatClock, useCountdown } from '@/features/play/useCountdown';
 import { CreateTournamentModal } from '@/features/tournament/CreateTournamentModal';
 import { getFromApi, postToApi } from '@/lib/clientApi';
 import { useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
 /**
- * The tournament entry point, in whichever of its states the couple is in: nothing yet, a request
- * awaiting an answer either way, running, paused, or between games.
+ * The tournament entry point, in whichever of its states the couple is in: nothing yet, running,
+ * paused, or between games. A request waiting on an answer is the one state it does not draw —
+ * that belongs to `TournamentRequestCentre`, which is in the layout and so is on every page.
  *
  * The card asks the server once on mount and is kept live by the socket after that — the same
  * arrangement as everything else that two people can change from two devices. Without it, one
- * partner requesting a series would leave the other looking at a "Start a tournament" button that
- * cannot work, or never learning a request arrived at all.
+ * partner starting a series would leave the other looking at a "Start a tournament" button that
+ * cannot work.
  */
 
 /** Terminal without ever having played a game: the couple is free to try again. */
@@ -53,13 +50,8 @@ function timeLeft(pausedUntil: string): string {
 
 export function TournamentCard({ games }: { games: CatalogueGame[] }) {
   const router = useRouter();
-  const { online, partner } = usePartnerPresence();
+  const { online } = usePartnerPresence();
   const [tournament, setTournament] = useState<TournamentView | null>(null);
-  // Called unconditionally, as every hook must be — `deadline` is only ever non-null while a
-  // request is `pending`, which is the only state that renders it.
-  const expiresInSeconds = useCountdown(
-    tournament?.expiresAt ? new Date(tournament.expiresAt).getTime() : null,
-  );
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -156,81 +148,14 @@ export function TournamentCard({ games }: { games: CatalogueGame[] }) {
     </>
   );
 
-  // A request neither of them has answered yet — the other partner accepting or declining, or the
-  // creator withdrawing, is what moves it out of this branch (`tournament.updated`) or into a
-  // running series (`tournament.next_game`).
-  if (tournament && tournament.status === 'pending') {
-    return (
-      <Card className="flex flex-col items-center gap-2 text-center">
-        {header}
-        {tournament.direction === 'incoming' ? (
-          <>
-            <span className="text-3xl" aria-hidden="true">
-              {avatarGlyph(partner?.avatarKey ?? 'fox')}
-            </span>
-            <p className="text-sm text-ink">
-              <PersonName name={partner?.nickname ?? 'They'} gender={partner?.gender} /> wants to
-              start <span className="font-semibold">{tournament.name}</span>
-            </p>
-            <ul className="flex flex-wrap justify-center gap-1.5">
-              {tournament.games.map((game) => (
-                <li
-                  key={game.position}
-                  className="flex items-center gap-1 rounded-pill bg-cream px-2.5 py-1 text-xs text-ink"
-                >
-                  <span aria-hidden="true">{gameGlyph(game.gameSlug)}</span>
-                  {game.gameName}
-                  {!game.scored && <span className="text-muted">· unscored</span>}
-                </li>
-              ))}
-            </ul>
-            <div className="flex w-full gap-2">
-              <Button
-                variant="soft"
-                className="flex-1"
-                disabled={busy}
-                onClick={() => void act(`/api/tournaments/${tournament.id}/respond`, { accept: false })}
-              >
-                🙈 Not now
-              </Button>
-              <Button
-                className="flex-1"
-                disabled={busy}
-                onClick={() => void act(`/api/tournaments/${tournament.id}/respond`, { accept: true })}
-              >
-                ❤️ Play
-              </Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="text-sm text-muted">
-              Waiting for{' '}
-              <PersonName name={partner?.nickname ?? 'them'} gender={partner?.gender} /> to answer{' '}
-              <span className="font-semibold text-ink">{tournament.name}</span>…
-            </p>
-            <Button
-              variant="ghost"
-              disabled={busy}
-              onClick={() => void act(`/api/tournaments/${tournament.id}/cancel`)}
-            >
-              Never mind
-            </Button>
-          </>
-        )}
-        {expiresInSeconds !== null && (
-          <p className="text-xs text-muted" role="timer">
-            {formatClock(expiresInSeconds)} left to answer
-          </p>
-        )}
-        {error && (
-          <p className="text-sm text-berry" role="alert">
-            {error}
-          </p>
-        )}
-      </Card>
-    );
-  }
+  /**
+   * A request neither of them has answered yet belongs to `TournamentRequestCentre`, which is in
+   * the layout and therefore on whichever page the person is actually reading.
+   *
+   * Nothing here rather than the "Start a tournament" button below: a second request would be
+   * refused with a 409, and the sheet asking about the first one is already on screen.
+   */
+  if (tournament && tournament.status === 'pending') return null;
 
   // Running right now: the way back in is the session, not a new series.
   if (tournament && tournament.status === 'active') {
@@ -308,7 +233,9 @@ export function TournamentCard({ games }: { games: CatalogueGame[] }) {
         {/* `null` means our own connection is down, and not being able to tell is no reason to stop
             somebody playing. Only a definite "they are not here" disables the button. */}
         {online === false && (
-          <p className="text-xs text-muted">They are offline. Try when they are online next time.</p>
+          <p className="text-xs text-muted">
+            They are offline. Try when they are online next time.
+          </p>
         )}
       </Card>
 

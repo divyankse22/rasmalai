@@ -225,7 +225,7 @@ export function SessionWatch() {
           📡
         </span>
         <p className="flex-1 text-sm text-ink">
-          {them} left the game.{' '}
+          {them} stepped away from the game.{' '}
           <span className="text-muted">Waiting for them to come back…</span>
         </p>
         {clock}

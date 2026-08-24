@@ -9,17 +9,24 @@ import {
   type Transition,
   type ValidationResult,
 } from '../contract';
-import { validate as validateWord } from './dictionary';
+import { anyMakeableFrom, validate as validateWord } from './dictionary';
 import { meta } from './meta';
 import {
   GOLDEN_MULTIPLIER,
+  HINTS_EACH,
+  HINT_COST,
   MAX_TURNS_EACH,
   MIN_WORD,
+  PASS_LETTERS,
+  POOL_MAX,
   POOL_SIZE,
   RAID_BONUS,
   RAID_LETTERS,
   RAID_LETTERS_BEHIND,
+  TURN_BONUS_MS,
+  TURN_START_MS,
   type OwnedWord,
+  type PlayLogEntry,
   type Tile,
   type WordGameAction,
   type WordGameView,
@@ -90,10 +97,26 @@ const BAG = [
   ...'yy',
 ];
 
+/** One completed turn, as the server records it. Resolved to the reader's side in `getView`. */
+interface LogEntry {
+  by: PlayerIndex;
+  word: string | null;
+  score: number;
+  raided: string | null;
+  timedOut: boolean;
+}
+
 interface WordGameState {
   /** Letters still face-down, in the order they will be dealt. */
   bag: string[];
   pool: Tile[];
+  /**
+   * How full the pool should be kept. Starts at `POOL_SIZE` and grows to `POOL_MAX` as people pass.
+   *
+   * One number does the whole dead-end rule: a pass either raises this (and `refill` fills it) or,
+   * once it is at the ceiling, swaps letters instead. Nothing else had to change.
+   */
+  poolTarget: number;
   nextTileId: number;
   /** The one tile currently worth double, or null if the pool is empty. */
   goldenTileId: number | null;
@@ -108,6 +131,21 @@ interface WordGameState {
   turnsTaken: [number, number];
   lastRejection: [WordRejection | null, WordRejection | null];
   lastPlay: { word: string; by: PlayerIndex; score: number; raided: boolean } | null;
+
+  /** How long each seat's turns are. Grows by `TURN_BONUS_MS` every time that seat finds a word. */
+  turnAllowanceMs: [number, number];
+  /** Server epoch ms this turn runs out. Null only while the match is paused. */
+  turnEndsAt: number | null;
+  /** What was left of the turn when it froze, held across a pause and given back on resume. */
+  turnLeftMs: number | null;
+
+  hintsLeft: [number, number];
+  /** Points spent on hints, kept apart from word scores because words can be broken. */
+  hintPenalty: [number, number];
+  /** The tile a hint is currently pointing at, and who paid for it. Cleared when the turn changes. */
+  hint: { player: PlayerIndex; tileId: number } | null;
+
+  log: LogEntry[];
   complete: boolean;
 }
 
@@ -129,8 +167,16 @@ const scoreOf = (word: string, golden: boolean): number =>
 const wordScore = (words: readonly OwnedWord[]): number =>
   words.reduce((total, owned) => total + owned.score, 0);
 
+/**
+ * What a seat is worth right now: the words they still hold, plus raid bonuses, minus hints.
+ *
+ * Note this is also what `raidThreshold` reads, so spending a hint can push you far enough behind
+ * to unlock the five-letter raid. That is emergent rather than designed — five points for a
+ * situational one-letter discount is a fair trade, and it is written down in `docs/16_WORD_GAME.md`
+ * rather than left to be discovered.
+ */
 const totalOf = (state: WordGameState, player: PlayerIndex): number =>
-  wordScore(state.words[player]) + state.raidPoints[player];
+  wordScore(state.words[player]) + state.raidPoints[player] - state.hintPenalty[player];
 
 /**
  * **Turn seam.** May this seat move right now?
@@ -198,7 +244,7 @@ function lettersOf(word: string, state: WordGameState): Tile[] {
 
 /** Deal the pool back up to size, and make sure exactly one tile is golden. */
 function refill(state: WordGameState, context: GameContext): void {
-  while (state.pool.length < POOL_SIZE && state.bag.length > 0) {
+  while (state.pool.length < state.poolTarget && state.bag.length > 0) {
     state.pool.push({ id: state.nextTileId, letter: state.bag.shift()!, golden: false });
     state.nextTileId += 1;
   }

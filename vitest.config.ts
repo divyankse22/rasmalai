@@ -3,7 +3,14 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['apps/server/src/**/*.test.ts', 'packages/*/src/**/*.test.ts'],
+    // The web app has no DOM test harness and does not need one: what is worth testing there is
+    // pure decision logic (which sentence, which destination), extracted into plain modules that
+    // run in this same node environment.
+    include: [
+      'apps/server/src/**/*.test.ts',
+      'apps/web/src/**/*.test.ts',
+      'packages/*/src/**/*.test.ts',
+    ],
     // Integration suites talk to a real Postgres and a real Supabase project. They are opt-in
     // through `npm run test:integration`, so `npm test` stays runnable with no database at all.
     exclude: ['**/node_modules/**', '**/dist/**', '**/*.integration.test.ts'],

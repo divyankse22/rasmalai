@@ -26,5 +26,8 @@ export default async function PlayPage({ params }: { params: Promise<{ sessionId
   if (!data.viewer) redirect('/onboarding');
   if (!data.couple) redirect('/pairing');
 
-  return <PlayScreen sessionId={sessionId} />;
+  // Keyed, so moving to the next game of a series is a new screen rather than the old one handed a
+  // new id. The play screen holds terminal state — this game is over, here is where you go next —
+  // and none of it is true of the game after it.
+  return <PlayScreen key={sessionId} sessionId={sessionId} />;
 }

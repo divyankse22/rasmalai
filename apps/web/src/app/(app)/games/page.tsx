@@ -37,7 +37,9 @@ export default async function GamesPage() {
 
       {/* The same catalogue the list above renders, so a series can only be built from games that
           actually exist. The card filters it down to the ones with a module behind them. */}
-      <TournamentCard games={data.games} />
+      <div id="tournament" className="scroll-mt-6">
+        <TournamentCard games={data.games} />
+      </div>
     </main>
   );
 }

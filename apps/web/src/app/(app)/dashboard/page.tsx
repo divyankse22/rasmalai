@@ -3,6 +3,7 @@ import { Card } from '@/design-system/Card';
 import { CoupleHeader } from '@/features/dashboard/CoupleHeader';
 import { PlayTeaser } from '@/features/dashboard/PlayTeaser';
 import { StatsPanels } from '@/features/dashboard/StatsPanels';
+import { TournamentCard } from '@/features/dashboard/TournamentCard';
 import { getDashboard } from '@/lib/api';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
@@ -49,6 +50,13 @@ export default async function DashboardPage() {
 
       {/* The catalogue itself lives at /games; this is the way in. */}
       <PlayTeaser games={games} />
+
+      {/* Also here and not only on /games: this is the page the app lands you on, so it is the page
+          a series has to be visible from — and it is where a tournament game that ended badly sends
+          you back to, by the `#tournament` anchor. */}
+      <div id="tournament" className="scroll-mt-6">
+        <TournamentCard games={games} />
+      </div>
     </main>
   );
 }

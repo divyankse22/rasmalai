@@ -4,6 +4,7 @@ import { AppNav } from '@/features/navigation/AppNav';
 import { SessionWatch } from '@/features/play/SessionWatch';
 import { PartnerPresence } from '@/features/presence/PartnerPresence';
 import { PartnerPresenceProvider } from '@/features/presence/usePartnerPresence';
+import { TournamentRequestCentre } from '@/features/tournament/TournamentRequestCentre';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 
 /**
@@ -30,6 +31,9 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </div>
 
         <InvitationCentre />
+        {/* A series is asked for the same way a single game is, so it is waited for in the same
+            place. Its card lives on a page; a page is not where the person being asked is. */}
+        <TournamentRequestCentre />
         {/* Also here rather than on `/play`, and for the sharper version of the same reason: the
             person it most needs to reach is the one who has left that page and is two minutes from
             forfeiting a match they may not realise is still running. */}

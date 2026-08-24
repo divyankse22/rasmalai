@@ -38,11 +38,22 @@ export type WordValidation =
  */
 let words: ReadonlySet<string> | null = null;
 
+/**
+ * The same words in file order, for scanning.
+ *
+ * A `Set` answers "is this a word" and cannot answer "give me a word that fits these letters"
+ * without iteration, and iterating a Set to build an array on every hint would be worse than
+ * keeping one. The strings are shared with the Set, so this is 58k pointers rather than 58k words.
+ */
+let ordered: readonly string[] | null = null;
+
 function load(): ReadonlySet<string> {
   if (words) return words;
 
   const text = gunzipSync(Buffer.from(WORDS_GZ_BASE64, 'base64')).toString('utf8');
-  const parsed = new Set(text.split('\n').filter((line) => line.length > 0));
+  const lines = text.split('\n').filter((line) => line.length > 0);
+  const parsed = new Set(lines);
+  ordered = lines;
 
   // A truncated or half-written payload would otherwise present as "that is not a word", which is
   // the single most confusing way this could fail: the game would work, and simply be wrong.
@@ -85,6 +96,59 @@ export function validate(input: string): WordValidation {
   if (!load().has(word)) return { valid: false, word, reason: 'NOT_FOUND' };
 
   return { valid: true, word };
+}
+
+const A = 'a'.charCodeAt(0);
+
+/** How many of each letter, as a 26-slot tally. */
+function tally(letters: readonly string[] | string): Int8Array {
+  const counts = new Int8Array(26);
+  for (const letter of letters) {
+    const at = letter.charCodeAt(0) - A;
+    if (at >= 0 && at < 26) counts[at]! += 1;
+  }
+  return counts;
+}
+
+/**
+ * A word that can actually be built from these letters, or null if there is not one.
+ *
+ * This is the hint. It is here rather than in the rulebook because it is a question about the
+ * lexicon — the rulebook decides whether a player may play a word, and this decides which words
+ * exist inside a handful of letters.
+ *
+ * `pick` chooses among the candidates and is passed in rather than taken from `Math.random`, so the
+ * caller stays pure: the rulebook hands it `context.random()` and the platform's seeded RNG decides.
+ * It receives the number of candidates and must return an index inside it.
+ *
+ * Cost: one pass over 58,252 words, each an early-exit tally comparison, and words longer than the
+ * pool are skipped outright. Single-digit milliseconds, at most three times per player per match.
+ */
+export function anyMakeableFrom(
+  letters: readonly string[],
+  pick: (count: number) => number,
+): string | null {
+  load();
+  const available = tally(letters);
+  const candidates: string[] = [];
+
+  for (const word of ordered!) {
+    if (word.length > letters.length) continue;
+
+    const needed = tally(word);
+    let fits = true;
+    for (let index = 0; index < 26; index += 1) {
+      if (needed[index]! > available[index]!) {
+        fits = false;
+        break;
+      }
+    }
+    if (fits) candidates.push(word);
+  }
+
+  if (candidates.length === 0) return null;
+  const at = Math.min(Math.max(pick(candidates.length), 0), candidates.length - 1);
+  return candidates[at]!;
 }
 
 /** For tests and diagnostics. Forces the decode. */

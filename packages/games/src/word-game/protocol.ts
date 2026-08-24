@@ -13,8 +13,37 @@
  * of tiles could not say which one it meant.
  */
 
-/** Face-up letters available to whoever is on the move. */
+/** Face-up letters at the start. The pool grows from here when somebody passes. */
 export const POOL_SIZE = 12;
+
+/**
+ * The most letters that will ever be on the table.
+ *
+ * A pass tops the board up rather than doing nothing, so two people cannot both be stuck staring at
+ * the same dead pool. It grows to here and then stops growing — beyond eighteen a phone screen is
+ * more scanning than game, and the countdown is running while you scan.
+ */
+export const POOL_MAX = 18;
+
+/** How many letters a pass adds, or swaps once the pool is already at `POOL_MAX`. */
+export const PASS_LETTERS = 3;
+
+/**
+ * How long the first turn is.
+ *
+ * The game's own clock, not the platform's. `turnOf` still returns null, so the 120-second move
+ * window stays off — running this one out costs a turn, never the match.
+ */
+export const TURN_START_MS = 30_000;
+
+/** What each valid word adds to that player's allowance, for every turn they take after it. */
+export const TURN_BONUS_MS = 5_000;
+
+/** Hints per player, per match. */
+export const HINTS_EACH = 3;
+
+/** What a hint costs, off the final score. A three-letter word is worth nine, for comparison. */
+export const HINT_COST = 5;
 
 /** Shortest playable word. Matches the dictionary's own floor. */
 export const MIN_WORD = 3;
@@ -72,7 +101,9 @@ export type WordRejection =
   | 'NOT_YOUR_TURN'
   | 'INSUFFICIENT_LETTERS'
   | 'TOO_SHORT_TO_RAID'
-  | 'NO_SUCH_TARGET';
+  | 'NO_SUCH_TARGET'
+  | 'NO_HINTS_LEFT'
+  | 'NO_HINT_AVAILABLE';
 
 /**
  * Claim a word, and optionally break one of your partner's with it.
@@ -93,7 +124,33 @@ export interface PassAction {
   type: 'pass';
 }
 
-export type WordGameAction = ClaimAction | PassAction;
+/**
+ * Spend a hint: highlight the first letter of a word that is genuinely on the table.
+ *
+ * Does not end the turn and does not stop the clock — it costs points, which is enough. If nothing
+ * at all is makeable the hint is refused rather than spent, because charging five points for a hint
+ * that cannot be given would be the worst possible moment to take them.
+ */
+export interface HintAction {
+  type: 'hint';
+}
+
+export type WordGameAction = ClaimAction | PassAction | HintAction;
+
+/**
+ * One completed turn, oldest first.
+ *
+ * `word` is null for a pass, and `timedOut` separates a pass somebody chose from a clock that ran
+ * out on them — which reads very differently when you are looking back at how the match went.
+ */
+export interface PlayLogEntry {
+  by: 'you' | 'them';
+  word: string | null;
+  score: number;
+  /** The partner's word this play broke, if it broke one. */
+  raided: string | null;
+  timedOut: boolean;
+}
 
 /** One reader's view of the match. Almost all of it is public by nature. */
 export interface WordGameView {
@@ -114,5 +171,29 @@ export interface WordGameView {
   lastRejection: WordRejection | null;
   /** The last word either of them played, for a bit of theatre. */
   lastPlay: { word: string; byYou: boolean; score: number; raided: boolean } | null;
+
+  /**
+   * Server epoch ms this turn runs out, or null while the match is paused.
+   *
+   * Absolute rather than a remaining-ms number, like every clock in this codebase: the client
+   * subtracts its own `Date.now()` on a short interval, so a slightly wrong clock draws a slightly
+   * wrong countdown and decides nothing by it. Null means frozen — the renderer must stop counting
+   * rather than extrapolate, because a countdown running while the clock is stopped would be lying.
+   */
+  turnEndsAt: number | null;
+
+  /** How long this reader's turns are now, so the +5s for a word is visible as it is earned. */
+  yourTurnLengthMs: number;
+
+  yourHintsLeft: number;
+  /** Visible because a hint costs points and the score is public. Where it points is not. */
+  theirHintsLeft: number;
+
+  /** The tile a hint is pointing at, for the reader who paid for it. Null for their partner. */
+  hintTileId: number | null;
+
+  /** Every completed turn, oldest first. */
+  log: readonly PlayLogEntry[];
+
   complete: boolean;
 }
