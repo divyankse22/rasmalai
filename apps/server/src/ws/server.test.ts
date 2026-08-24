@@ -153,6 +153,10 @@ const sessionsStub: SessionRegistry = {
   leave(...args) {
     calls.push({ method: 'leave', args });
   },
+  giveUp(...args) {
+    calls.push({ method: 'giveUp', args });
+    if (refuseWith) throw refuseWith;
+  },
   react(...args) {
     calls.push({ method: 'react', args });
   },

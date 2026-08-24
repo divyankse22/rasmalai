@@ -102,12 +102,18 @@ export interface MatchResultView {
   /** False for cooperative, social and casual games, where nobody beats anybody (P-3). */
   competitive: boolean;
   /**
-   * Won because the other player never came back, rather than on the board.
-   *
-   * Scored 1–0 like a walkover rather than freezing whatever the game happened to show, so nobody
-   * reads "you win, 1–3". The screen leans on this to say what happened instead of a scoreline.
+   * Won by a walkover rather than on the board — either a timeout (nobody came back) or a
+   * deliberate concession (`byGiveUp`). True for both, because the database only needs to know this
+   * was not a played-out result; the screen reads `byGiveUp` underneath this to say which walkover
+   * it was, since "you win, 1–3" is not a sentence anybody should read either way.
    */
   byForfeit: boolean;
+  /**
+   * The walkover was a deliberate concession, not a timeout. Only meaningful alongside `byForfeit`;
+   * a game with no winner to award (P-3) never reaches a result for a give-up at all — it ends
+   * instead, with `SessionEndReason` 'gave_up'.
+   */
+  byGiveUp: boolean;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -256,6 +262,12 @@ export type SessionEndReason =
    * who did not come back.
    */
   | 'forfeited'
+  /**
+   * Somebody deliberately gave up, present and mid-match — not a timeout. Only reaches here for the
+   * games where there is no winner to award (P-3); a competitive give-up ends as a **result**
+   * instead (`MatchResultView.byGiveUp`), the same as a competitive forfeit does.
+   */
+  | 'gave_up'
   /** The backend went down; live sessions are memory-only and do not survive it. */
   | 'server_stopped';
 
@@ -264,8 +276,8 @@ export interface SessionEndedPayload {
   session: SessionView;
   reason: SessionEndReason;
   /**
-   * Who closed it, when `reason` is `left`. Without it both partners read the same frame and each
-   * concludes the other one walked out.
+   * Who closed it, or who it happened to — set for `left`, `forfeited` and `gave_up`. Without it
+   * both partners read the same frame and each concludes the other one walked out.
    */
   byUserId?: string;
 }

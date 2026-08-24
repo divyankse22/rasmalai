@@ -165,8 +165,10 @@ interface Session {
   /** Whether the match's own clock is currently stopped, so it is neither paused nor resumed twice. */
   gamePaused: boolean;
   result: GameResult | null;
-  /** Whether that result was won on the board or by the other player never coming back. */
+  /** Whether that result was won on the board, or by a walkover — a timeout or a concession. */
   resultByForfeit: boolean;
+  /** Whether a walkover result was a deliberate concession rather than a timeout. */
+  resultByGiveUp: boolean;
   /** A pending request to stop, which only exists during an active match. */
   leaveRequest: LeaveRequest | null;
   /**
@@ -307,6 +309,15 @@ export interface SessionRegistry {
    * for. Allowed once they are gone, because there is nobody left to ask.
    */
   leave(sessionId: string, userId: string): void;
+  /**
+   * A deliberate concession, mid-match. Unlike `requestLeave`, needs nobody's agreement — the whole
+   * point is that it decides the match on the spot, the same way running out the reconnect clock
+   * does, just chosen rather than fallen into. A competitive game awards the other seat the win with
+   * the real board's current score (`RunningMatch.currentResult`), not a fabricated 1–0, and lands
+   * on the ordinary results/rematch screen. A game with no winner to award (P-3) simply ends, same
+   * as any other forfeit of that kind.
+   */
+  giveUp(sessionId: string, userId: string): void;
   react(sessionId: string, userId: string, reaction: Reaction): void;
   /**
    * A game's own ephemeral signal — opaque to the platform, relayed and forgotten exactly like
@@ -377,6 +388,7 @@ export function createSessionRegistry(
     seat: PlayerIndex,
     competitive: boolean,
     byForfeit: boolean,
+    byGiveUp: boolean,
   ): MatchResultView {
     return {
       // P-3 decides this before the scoreline does. A cooperative or social game has no winner to
@@ -388,6 +400,7 @@ export function createSessionRegistry(
       theirScore: result.scores[otherSeat(seat)],
       competitive,
       byForfeit,
+      byGiveUp,
     };
   }
 
@@ -407,7 +420,13 @@ export function createSessionRegistry(
       // and a client that missed one is never subtly behind.
       game: session.game ? { slug: session.game.slug, state: session.game.viewFor(seat) } : null,
       result: session.result
-        ? resultView(session.result, seat, session.competitive, session.resultByForfeit)
+        ? resultView(
+            session.result,
+            seat,
+            session.competitive,
+            session.resultByForfeit,
+            session.resultByGiveUp,
+          )
         : null,
       startsAt: session.startsAt,
       turnUserId: session.turnSeat === null ? null : session.players[session.turnSeat].userId,
@@ -689,8 +708,18 @@ export function createSessionRegistry(
     }
   }
 
-  /** The match is over. The session is not: this is the results screen, and a rematch starts here. */
-  function finishMatch(session: Session, result: GameResult, byForfeit = false): void {
+  /**
+   * The match is over. The session is not: this is the results screen, and a rematch starts here.
+   *
+   * `byGiveUp` is a screen-only refinement of `byForfeit` — the database only distinguishes a played
+   * result from a walkover, and a concession is a walkover exactly as a timeout is.
+   */
+  function finishMatch(
+    session: Session,
+    result: GameResult,
+    byForfeit = false,
+    byGiveUp = false,
+  ): void {
     // Seats become people here and nowhere else. A game never learns who it was played by, and the
     // statistics never learn there were seats.
     recordEnd(session, {
@@ -706,6 +735,7 @@ export function createSessionRegistry(
     session.phase = 'finished';
     session.result = result;
     session.resultByForfeit = byForfeit;
+    session.resultByGiveUp = byGiveUp;
     session.startsAt = null;
     // Nothing is pending against a match that has ended — including a request to stop it.
     dropLeaveRequest(session);
@@ -759,6 +789,37 @@ export function createSessionRegistry(
     finishMatch(session, { winner: stayed, draw: false, scores }, true);
   }
 
+  /**
+   * One player concedes, present and mid-match, on purpose.
+   *
+   * The counterpart to `forfeit` for somebody who is still right here: same walkover shape, same
+   * P-3 split between a competitive result and a game with no winner to award, but the reason is
+   * chosen rather than fallen into, and the score is the real board — `RunningMatch.currentResult`
+   * — rather than a fabricated 1–0. Fabricating one would be pretending the match never happened;
+   * it did, right up until this player decided to stop, and the screen should say so honestly.
+   *
+   * The winner is always the other seat, never decided by who currently holds more points: giving
+   * up is a choice to lose, not a claim about the board.
+   */
+  function concede(session: Session, quitterUserId: string): void {
+    const quitterSeat = seatOf(session, quitterUserId);
+    const stayed = otherSeat(quitterSeat);
+    const game = session.game;
+
+    session.turnSeat = null;
+    session.turnDeadline = null;
+    game?.stop();
+
+    if (!session.competitive) {
+      endSession(session, 'abandoned', 'gave_up', quitterUserId);
+      return;
+    }
+
+    const current = game!.currentResult();
+    logger.info({ sessionId: session.id, quitterUserId }, 'match given up on');
+    finishMatch(session, { winner: stayed, draw: false, scores: current.scores }, true, true);
+  }
+
   /** Hands the session over to the game module. Everything from here is the game's decision. */
   function startGame(session: Session): void {
     const rules = findRules(session.gameSlug);
@@ -774,6 +835,7 @@ export function createSessionRegistry(
     session.game?.stop();
     session.result = null;
     session.resultByForfeit = false;
+    session.resultByGiveUp = false;
     session.competitive = rules.meta.scoringKind === 'competitive';
     session.pauseOnDisconnect = rules.reconnectPolicy.pauseOnDisconnect;
 
@@ -994,6 +1056,7 @@ export function createSessionRegistry(
         gamePaused: false,
         result: null,
         resultByForfeit: false,
+        resultByGiveUp: false,
         leaveRequest: null,
         mode,
         tournamentId: mode === 'tournament' ? (tournamentId ?? null) : null,
@@ -1173,6 +1236,19 @@ export function createSessionRegistry(
       // Deliberately not a disconnect. Someone who walks away on purpose should not leave their
       // partner watching a two-minute countdown for a person who is not coming back.
       endSession(session, session.phase === 'finished' ? 'finished' : 'abandoned', 'left', userId);
+    },
+
+    giveUp(sessionId, userId) {
+      const session = requireSession(sessionId);
+      // Authorization first, same as every other action — knowing an id is not permission to lose
+      // somebody else's game for them.
+      seatOf(session, userId);
+
+      if (session.phase !== 'active' || !session.game) {
+        throw new SessionError('invalid_game_state', 'There is nothing to give up right now.');
+      }
+
+      concede(session, userId);
     },
 
     react(sessionId, userId, reaction) {

@@ -4,6 +4,13 @@ import { Suspense, lazy, useMemo, type ComponentType } from 'react';
 import type { GameRenderProps } from '@rasmalai/games';
 import { findGameRenderer } from '@rasmalai/games/client';
 import type { GameSnapshot, SessionPlayer } from '@rasmalai/shared';
+import { GameErrorBoundary } from './GameErrorBoundary';
+
+/** `'word-game'` → `'Word game'` — good enough for a fallback message, no per-game import needed. */
+function humanize(slug: string): string {
+  const words = slug.split('-');
+  return `${words[0]!.charAt(0).toUpperCase()}${words[0]!.slice(1)} ${words.slice(1).join(' ')}`.trim();
+}
 
 /**
  * Where a game is put on screen, and the only place the web app knows one exists.
@@ -50,21 +57,25 @@ export function GameMount({
   }
 
   return (
-    <Suspense
-      fallback={
-        <p className="py-10 text-center text-sm text-muted" role="status">
-          Loading the game…
-        </p>
-      }
-    >
-      <Renderer
-        view={snapshot.state}
-        you={you}
-        partner={partner}
-        act={act}
-        partnerSignal={partnerSignal}
-        sendSignal={sendSignal}
-      />
-    </Suspense>
+    // Keyed by slug so a crash in one game does not stick around once the session moves to another
+    // — or a fresh rematch of the same one — rather than leaving the boundary permanently tripped.
+    <GameErrorBoundary key={snapshot.slug} gameName={humanize(snapshot.slug)}>
+      <Suspense
+        fallback={
+          <p className="py-10 text-center text-sm text-muted" role="status">
+            Loading the game…
+          </p>
+        }
+      >
+        <Renderer
+          view={snapshot.state}
+          you={you}
+          partner={partner}
+          act={act}
+          partnerSignal={partnerSignal}
+          sendSignal={sendSignal}
+        />
+      </Suspense>
+    </GameErrorBoundary>
   );
 }

@@ -60,6 +60,16 @@ const CANVAS_H = COURT_HEIGHT * PX_PER_M + FLOOR_PX;
 /** How far you have to drag for a full-strength throw. */
 const FULL_POWER_PX = 260;
 
+/**
+ * Where the sliders sit before a shot and snap back to right after one.
+ *
+ * The exact midpoint of each range, not a hand-picked "good" starting throw — level one's hoop
+ * never moves, so if the controls held still at whatever last worked, leaving them untouched would
+ * silently repeat the same throw shot after shot. Snapping back to dead centre means every shot
+ * has to be aimed again.
+ */
+const MID_AIM = { angle: (MIN_ANGLE_DEG + MAX_ANGLE_DEG) / 2, power: 0.5 };
+
 const BALL_RADIUS_M = 0.12;
 
 interface Palette {
@@ -394,7 +404,7 @@ export default function BasketballGame({
 }: GameRenderProps<BasketballView>) {
   const host = useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = useState(false);
-  const [aim, setAim] = useState({ angle: 52, power: 0.6 });
+  const [aim, setAim] = useState(MID_AIM);
   const [remaining, setRemaining] = useState<number | null>(null);
 
   const palette = useMemo(readPalette, []);
@@ -408,6 +418,8 @@ export default function BasketballGame({
   const shoot = useCallback(
     (angle: number, power: number) => {
       act({ type: 'shoot', shot: view.shotNumber, angle, power });
+      // Back to dead centre for the next shot — see MID_AIM.
+      setAim(MID_AIM);
     },
     // Read through a ref inside the bridge, so the scene never holds a stale shot number.
     [act, view.shotNumber],
@@ -561,11 +573,8 @@ export default function BasketballGame({
           </span>
         )}
 
-        {distanceNow !== null && (
-          <span className="text-muted tabular-nums">
-            {distanceNow.toFixed(1)}m
-            {distanceNow >= THREE_POINT_DISTANCE && <span className="text-berry"> · worth 3</span>}
-          </span>
+        {distanceNow !== null && distanceNow >= THREE_POINT_DISTANCE && (
+          <span className="text-berry">worth 3</span>
         )}
       </div>
 
@@ -573,6 +582,13 @@ export default function BasketballGame({
           way to throw for anyone who would rather not drag. */}
       {view.yourTurn && (
         <div className="mx-auto flex w-full max-w-md flex-col gap-2 rounded-card bg-cream p-3">
+          {/*
+            No numeric readout next to either slider, on purpose: level one's hoop never moves, so an
+            exact degree or percentage a player could jot down and replay verbatim would turn "judge
+            the arc" into "type in the number that worked last time." Aiming stays feel-based — drag
+            position or slider position, never a digit to memorise. The native range input still
+            announces its value to assistive tech, so this costs nothing for keyboard/screen-reader use.
+          */}
           <label className="flex items-center gap-3 text-sm text-muted">
             <span className="w-14 shrink-0">Angle</span>
             <input
@@ -584,7 +600,6 @@ export default function BasketballGame({
               value={aim.angle}
               onChange={(event) => setAim((current) => ({ ...current, angle: event.target.valueAsNumber }))}
             />
-            <span className="w-12 shrink-0 text-right tabular-nums text-ink">{aim.angle}°</span>
           </label>
 
           <label className="flex items-center gap-3 text-sm text-muted">
@@ -600,9 +615,6 @@ export default function BasketballGame({
                 setAim((current) => ({ ...current, power: event.target.valueAsNumber / 100 }))
               }
             />
-            <span className="w-12 shrink-0 text-right tabular-nums text-ink">
-              {Math.round(aim.power * 100)}%
-            </span>
           </label>
 
           <button

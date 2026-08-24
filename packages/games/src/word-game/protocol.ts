@@ -13,17 +13,23 @@
  * of tiles could not say which one it meant.
  */
 
-/** Face-up letters at the start. The pool grows from here when somebody passes. */
-export const POOL_SIZE = 12;
+/**
+ * Face-up letters at the start. The pool grows from here when somebody passes.
+ *
+ * Raised from 12 for an easier deal: more letters visible at once means more words are actually
+ * makeable from any given pool, without touching the vowel-heavy bag ratio or any scoring number.
+ */
+export const POOL_SIZE = 14;
 
 /**
  * The most letters that will ever be on the table.
  *
  * A pass tops the board up rather than doing nothing, so two people cannot both be stuck staring at
- * the same dead pool. It grows to here and then stops growing — beyond eighteen a phone screen is
- * more scanning than game, and the countdown is running while you scan.
+ * the same dead pool. It grows to here and then stops growing — a phone screen is more scanning than
+ * game past a point, and the countdown is running while you scan. Raised alongside `POOL_SIZE` by
+ * the same two letters, keeping the six-letter growth room the original 12→18 had.
  */
-export const POOL_MAX = 18;
+export const POOL_MAX = 20;
 
 /** How many letters a pass adds, or swaps once the pool is already at `POOL_MAX`. */
 export const PASS_LETTERS = 3;

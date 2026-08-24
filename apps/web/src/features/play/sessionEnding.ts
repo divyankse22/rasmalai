@@ -16,10 +16,13 @@ export const RETURN_DELAY_MS = 2_000;
  *
  * A tournament game returns to the series rather than the top of the dashboard — after a game ends
  * badly the next thing anybody wants is the standings and the way back in, both of which are on the
- * tournament card.
+ * tournament card. Once the series itself is over there is no game left to return to, so this goes
+ * to the tournament's own page instead — where the finale lives — rather than a dashboard card that
+ * has nothing left to offer but "start another".
  */
 export function returnPathFor(tournament: TournamentView | null | undefined): string {
-  return tournament ? '/dashboard#tournament' : '/dashboard';
+  if (!tournament) return '/dashboard';
+  return tournament.status === 'completed' ? `/tournament/${tournament.id}` : '/dashboard#tournament';
 }
 
 /**
@@ -40,6 +43,13 @@ export function endingMessage({ session, reason, byUserId }: SessionEndedPayload
   // award (P-3) — a competitive forfeit ends as a result instead, and never as an ending.
   if (reason === 'forfeited') {
     return mine ? 'You did not make it back in time.' : `${them} did not make it back in time.`;
+  }
+
+  // A deliberate concession, present the whole time — the opposite of `forfeited` above, and worth
+  // a different sentence: nobody was missing, they just stopped. Only reaches here for games with
+  // no winner to award (P-3); a competitive give-up ends as a result instead, same as a forfeit.
+  if (reason === 'gave_up') {
+    return mine ? 'You backed off.' : `${them} backed off.`;
   }
 
   if (reason !== 'left') {

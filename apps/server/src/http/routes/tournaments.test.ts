@@ -383,6 +383,37 @@ describe('reading the active tournament', () => {
   });
 });
 
+describe("reading one tournament by id", () => {
+  it('answers with it, whatever its status', async () => {
+    tournaments.active = testTournament({ status: 'completed', winnerUserId: TEST_USER_ID });
+
+    const response = await request(`/api/tournaments/${TEST_TOURNAMENT_ID}`, { token: 'valid' });
+    const body = (await response.json()) as { tournament: TournamentView };
+
+    expect(response.status).toBe(200);
+    expect(body.tournament.status).toBe('completed');
+    expect(body.tournament.winner).toBe('you');
+  });
+
+  it('refuses one belonging to another couple, id or no id', async () => {
+    tournaments.active = testTournament({ status: 'completed' });
+
+    const response = await request('/api/tournaments/66666666-6666-6666-6666-666666666666', {
+      token: 'valid',
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it('is not found for somebody with no couple', async () => {
+    dashboard.scope = null;
+
+    const response = await request(`/api/tournaments/${TEST_TOURNAMENT_ID}`, { token: 'valid' });
+
+    expect(response.status).toBe(404);
+  });
+});
+
 describe('resuming a paused tournament', () => {
   beforeEach(() => {
     tournaments.active = testTournament({ status: 'paused' });

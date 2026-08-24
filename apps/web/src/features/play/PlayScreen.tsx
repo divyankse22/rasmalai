@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -23,7 +24,6 @@ import { gameGlyph } from '@/features/dashboard/gameGlyphs';
 import { avatarGlyph } from '@/features/onboarding/avatars';
 import { RETURN_DELAY_MS, endingMessage, returnPathFor } from '@/features/play/sessionEnding';
 import { formatClock, useCountdown } from '@/features/play/useCountdown';
-import { TournamentFinale, TournamentScoreboard } from '@/features/tournament/TournamentScoreboard';
 import { GameMount } from '@/games/GameMount';
 import { useRealtime, useRealtimeEvent, useResyncOnReconnect } from '@/realtime/RealtimeProvider';
 
@@ -96,6 +96,29 @@ function ResultBanner({ result, partner }: { result: MatchResultView; partner: S
     );
   }
 
+  // A deliberate concession, present the whole time — the opposite story from a timeout, and the
+  // real scoreline is worth printing here: nobody vanished, the board is exactly what it says.
+  if (result.byGiveUp) {
+    return (
+      <>
+        <span className="text-4xl" aria-hidden="true">
+          🏳️
+        </span>
+        <p className="font-display text-xl font-bold text-ink">
+          {result.outcome === 'won' ? 'They gave up' : 'You gave up'}
+        </p>
+        <p className="font-display text-lg text-muted tabular-nums">
+          <span className="text-ink">{result.yourScore}</span>
+          <span className="px-2">—</span>
+          <span className="text-ink">{result.theirScore}</span>
+        </p>
+        <p className="text-xs text-muted">
+          you · <PersonName name={partner.nickname} gender={partner.gender} />
+        </p>
+      </>
+    );
+  }
+
   // Won because they never came back, which is not a scoreline worth printing. "You win 1–0" tells
   // nobody anything true about a match that was never finished.
   if (result.byForfeit) {
@@ -158,6 +181,7 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [returnAt, setReturnAt] = useState<number | null>(null);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [confirmingGiveUp, setConfirmingGiveUp] = useState(false);
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
   /** The partner's last `game.event`. Opaque to this screen — only the game itself reads it. */
   const [partnerSignal, setPartnerSignal] = useState<unknown>(null);
@@ -270,6 +294,18 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
     // the button that picks it up again.
     router.push(returnPathFor(session?.tournament));
   }, [send, sessionId, router, session?.phase, session?.tournament]);
+
+  /**
+   * A third way out, mid-match only: decide it right here rather than ask.
+   *
+   * Unlike `leave`, needs nobody's agreement — that is the whole point of a concession. The server
+   * turns it into a walkover result (or, for a game with no winner to award, an ending) and the
+   * screen finds out what happened the same way it finds out about any other ending.
+   */
+  const giveUp = useCallback(() => {
+    send(EVENTS.lobby.giveUp, { sessionId });
+    setConfirmingGiveUp(false);
+  }, [send, sessionId]);
 
   /**
    * This game is over, for whatever reason. Says so, stops talking to the server about it, and
@@ -468,9 +504,20 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         <h1 className="font-display text-xl font-bold text-ink">{session.gameName}</h1>
       </div>
 
-      {/* Where the series stands. Above the game rather than beside it, so it reads the same on a
-          phone as on a laptop — and only the games already played are scored (D-3). */}
-      {tournament && !seriesOver && <TournamentScoreboard tournament={tournament} />}
+      {/* The full standings live on the tournament's own page, not here — this screen stays focused
+          on the game being played. Just enough to say where things stand and how to get there. */}
+      {tournament && !seriesOver && (
+        <Link
+          href={`/tournament/${tournament.id}`}
+          className="flex items-center justify-center gap-2 self-center rounded-pill bg-cream px-4 py-1.5 text-sm text-muted transition-transform duration-quick ease-bounce active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
+        >
+          <span aria-hidden="true">🏆</span>
+          <span className="font-display font-semibold tabular-nums text-ink">
+            {tournament.yourTotalPoints}–{tournament.partnerTotalPoints}
+          </span>
+          <span>Series →</span>
+        </Link>
+      )}
 
       {/* The two of them, until the game itself takes over the screen and shows its own scoreline. */}
       {!playing && (
@@ -507,19 +554,20 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
         </Card>
       ) : null}
 
-      {/* The whole series is done, so this is the only scoreline that matters now. */}
-      {seriesOver && tournament && <TournamentFinale tournament={tournament} />}
-
       {session.phase === 'finished' && session.result && (
         <Card className="flex flex-col items-center gap-2 text-center">
           <ResultBanner result={session.result} partner={session.partner} />
 
           {/* D-2: each game is played once, so there is no rematch inside a series. Both of them
               readying moves the evening on to the next game instead. */}
-          {seriesOver ? (
+          {seriesOver && tournament ? (
+            // The finale — winner, final score — lives on the tournament's own page, not here.
             <div className="mt-2 flex w-full flex-col items-center gap-1">
-              <Button className="w-full" onClick={() => router.push('/dashboard')}>
-                Back to the dashboard
+              <Button
+                className="w-full"
+                onClick={() => router.push(`/tournament/${tournament.id}`)}
+              >
+                See the final score →
               </Button>
             </div>
           ) : !tournament && session.partner.ready && !session.you.ready ? (
@@ -662,14 +710,35 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
               </Button>
             </div>
           </Card>
+        ) : confirmingGiveUp ? (
+          // Unlike `requestLeave`, this needs nobody's agreement — it decides the match right here,
+          // which is exactly why it gets its own confirmation rather than sharing the one above.
+          <Card className="flex flex-col items-center gap-3 text-center">
+            <p className="text-sm text-ink">Give up? This one ends right here — no take-backs.</p>
+            <div className="flex w-full gap-2">
+              <Button variant="soft" className="flex-1" onClick={() => setConfirmingGiveUp(false)}>
+                Keep playing
+              </Button>
+              <Button className="flex-1" onClick={giveUp}>
+                Give up 🏳️
+              </Button>
+            </div>
+          </Card>
         ) : (
-          <Button
-            variant="ghost"
-            disabled={session.leaveRequest !== null}
-            onClick={() => setConfirmingLeave(true)}
-          >
-            {session.leaveRequest !== null ? 'Asked…' : matchRunning ? 'Ask to stop' : 'Leave'}
-          </Button>
+          <div className="flex items-center justify-center gap-2">
+            <Button
+              variant="ghost"
+              disabled={session.leaveRequest !== null}
+              onClick={() => setConfirmingLeave(true)}
+            >
+              {session.leaveRequest !== null ? 'Asked…' : matchRunning ? 'Ask to stop' : 'Leave'}
+            </Button>
+            {matchRunning && (
+              <Button variant="ghost" onClick={() => setConfirmingGiveUp(true)}>
+                Give up
+              </Button>
+            )}
+          </div>
         )}
       </div>
 

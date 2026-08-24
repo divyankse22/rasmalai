@@ -42,6 +42,21 @@ twelve migrations are applied. What is still outstanding for slices 7c and 8–1
 **two-account browser run**: nobody has played any of these games in two browser profiles. See known
 limitations 29–31.
 
+**Give Up, added platform-wide after slice 13.** A player can now concede mid-match — needing
+nobody's agreement, unlike `requestLeave`, because the whole point is deciding the match right there
+rather than asking. Reuses `forfeit`'s existing walkover machinery (`sessionRegistry.ts`'s new
+`concede`): a competitive game awards the other seat the win, but with the real board's *current*
+score (`RunningMatch.currentResult`, a new accessor onto each game's pure `getResult`) rather than a
+fabricated 1–0 — the match genuinely happened, right up until somebody chose to stop. A game with no
+winner to award (P-3) just ends, the same as any other forfeit of that kind, with its own honest
+`SessionEndReason` ('gave_up' → "backed off") distinct from a timeout's ('forfeited' → "did not make
+it back"). `MatchResultView.byGiveUp` lets `ResultBanner` tell the two walkovers apart on screen.
+Every game gets a "Give up" button in `PlayScreen` for free, since the mechanism lives entirely at
+the platform layer and no `GameRules` contract changed. Covered by rulebook-adjacent tests in
+`sessionRegistry.test.ts` (real board score, forced winner regardless of who is currently ahead,
+P-3 split, authorization) and `sessionEnding.test.ts`; not yet through a two-account browser run,
+same as everything else on that list.
+
 ---
 
 ## Slice 13: the first game that needs a dictionary

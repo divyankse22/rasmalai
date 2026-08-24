@@ -203,6 +203,41 @@ export function createTournamentsRouter(
     });
   });
 
+  /**
+   * One tournament's own page — the scoreboard while it runs, and the finale once it is done.
+   *
+   * Reachable by id from anywhere the couple has been shown one (the play screen's series link,
+   * the dashboard card, a reload of the results page), which is why couple scoping and not the
+   * tournament's own status is what gates it: knowing the id proves nothing on its own
+   * (`docs/07_SECURITY_PRIVACY.md`), but belonging to the couple it was played by does.
+   */
+  router.get('/tournaments/:id', async (req: Request, res: Response) => {
+    const tournamentId = req.params.id;
+    if (typeof tournamentId !== 'string') {
+      res.status(400).json({ error: { code: 'invalid_payload', message: 'Unknown tournament.' } });
+      return;
+    }
+
+    const userId = req.userId!;
+
+    try {
+      const couple = await resolveCouple(userId);
+      if (!couple) {
+        throw new TournamentError('tournament_not_found', 'That tournament does not exist.');
+      }
+
+      const tournament = await tournaments.getTournament(tournamentId, couple.coupleId);
+      if (!tournament) {
+        throw new TournamentError('tournament_not_found', 'That tournament does not exist.');
+      }
+
+      res.json({ tournament: tournamentViewForUser(tournament, userId, couple.userAId) });
+    } catch (error) {
+      if (failed(error, res)) return;
+      throw error;
+    }
+  });
+
   router.post(
     '/tournaments',
     // A series is a whole evening, so nobody needs to start many. Enough to recover from a

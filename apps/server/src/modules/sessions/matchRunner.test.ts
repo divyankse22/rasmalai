@@ -177,6 +177,26 @@ describe('the match clock', () => {
   });
 });
 
+describe('currentResult', () => {
+  it('reads getResult early, before the match is actually complete', () => {
+    const match = startMatch({ rules: tinyRules(), emitter });
+
+    // `result()` is null this early — nothing to see, the match is not over. `currentResult()`
+    // answers anyway: `getResult` is a pure read of state, so asking early is always safe.
+    expect(match.result()).toBeNull();
+    expect(match.currentResult()).toEqual(RESULT);
+  });
+
+  it('still answers once the match actually is complete, and agrees with result()', () => {
+    const match = startMatch({ rules: tinyRules(), emitter });
+    const at = { receivedAt: Date.now(), compensationMs: 0 };
+    match.submitAction(0, 'go', at);
+    match.submitAction(1, 'go', at);
+
+    expect(match.currentResult()).toEqual(match.result());
+  });
+});
+
 describe('actions', () => {
   it('passes the game’s refusal through as a session error', () => {
     const match = startMatch({ rules: tinyRules(), emitter });

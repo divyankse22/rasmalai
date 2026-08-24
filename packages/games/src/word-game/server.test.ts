@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import type { GameContext, PlayerIndex, Transition } from '../contract';
 import {
   GOLDEN_MULTIPLIER,
+  HINT_COST,
   MAX_TURNS_EACH,
+  PASS_LETTERS,
+  POOL_MAX,
   POOL_SIZE,
   RAID_BONUS,
   RAID_LETTERS,
   RAID_LETTERS_BEHIND,
+  TURN_BONUS_MS,
+  TURN_START_MS,
   type WordGameAction,
 } from './protocol';
 import { rules, type WordGameState } from './server';
@@ -41,7 +46,7 @@ function refusal(state: WordGameState, player: PlayerIndex, action: unknown): st
 function withPool(
   state: WordGameState,
   letters: string,
-  options: { golden?: number; bag?: string[] } = {},
+  options: { golden?: number; bag?: string[]; poolTarget?: number } = {},
 ): WordGameState {
   const pool = [...letters].map((letter, index) => ({
     id: 1000 + index,
@@ -51,6 +56,12 @@ function withPool(
   return {
     ...state,
     pool,
+    // Matches the hand-built pool by default, not whatever `fresh()` happened to deal — a custom
+    // pool is meant to stand on its own, and a test asserting on refill/growth math should not have
+    // to know POOL_SIZE to avoid a phantom mismatch between "how many tiles are here" and "how many
+    // the state thinks belong here". Overridable for the handful of tests specifically about that
+    // mismatch (a pool mid-growth, or already sitting at POOL_MAX).
+    poolTarget: options.poolTarget ?? pool.length,
     goldenTileId: options.golden === undefined ? null : pool[options.golden]!.id,
     bag: options.bag ?? [],
   };
@@ -90,13 +101,16 @@ describe('a new match', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('asks the platform for no clock at all, and never names a seat on the move', () => {
+  it('declines the platform move clock, but starts its own turn clock', () => {
     const state = fresh();
-    // Deliberate: a move clock would forfeit somebody for thinking, and twelve letters take longer
-    // than the platform's two minutes. Whose turn it is reaches the screen through the view.
+    // Deliberate: the platform's 120-second window would forfeit somebody for thinking, and twelve
+    // letters legitimately takes longer than that. Whose turn it is still reaches the screen
+    // through the view — it is simply not enforced by the platform's own clock.
     expect(rules.turnOf(state)).toBeNull();
-    expect(rules.nextTickAt(state)).toBeNull();
-    expect(rules.tick(state, 60_000, context).state).toBe(state);
+    // The game's own clock is a different mechanism, and does apply from the first turn.
+    expect(state.turnEndsAt).toBe(TURN_START_MS);
+    expect(rules.nextTickAt(state)).toBe(state.turnEndsAt);
+    expect(rules.tick(state, state.turnEndsAt! - 1, context).state).toBe(state);
   });
 });
 
@@ -341,11 +355,15 @@ describe('passing, and the end of the match', () => {
   });
 
   it('does not end on two passes while there are still letters to come', () => {
-    let state = withPool(fresh(), 'zxqvwjkfmbgy', { bag: ['a', 'b'] });
+    // A pass also grows the pool toward POOL_MAX (see 'the pool on a pass' below), which now
+    // draws from this same bag — ten letters is comfortably more than the six two passes can
+    // consume, so there is still something left when the second one lands.
+    let state = withPool(fresh(), 'zxqvwjkfmbgy', { bag: [...'abcdefghij'] });
     const first = turnOf(state);
     state = act(state, first, { type: 'pass' }).state;
     state = act(state, (1 - first) as PlayerIndex, { type: 'pass' }).state;
     expect(state.complete).toBe(false);
+    expect(state.bag.length).toBeGreaterThan(0);
   });
 
   it('starts the pass count again when somebody actually plays', () => {
@@ -365,7 +383,9 @@ describe('passing, and the end of the match', () => {
   it('stops on the turn cap even if neither of them ever passes', () => {
     // The backstop for having no move clock: without it, two players who never pass and never
     // exhaust the bag could sit in a match forever.
-    const base = withPool(fresh(), 'zxqvwjkfmbgy', { bag: ['a'] });
+    // Enough letters that this one pass's pool growth (up to PASS_LETTERS of them) does not drain
+    // the bag outright — the point of this test is the turn cap, not the bag.
+    const base = withPool(fresh(), 'zxqvwjkfmbgy', { bag: [...'abcde'] });
     // Player 0 has already used their allowance; player 1 is one short. The bag is not empty, so
     // the ordinary both-passed ending cannot fire — only the cap can.
     const state: WordGameState = {
@@ -465,5 +485,137 @@ describe('the view', () => {
     expect(view.pool).toHaveLength(12);
     // A serialized frame is small: if the dictionary ever leaked into a view this would explode.
     expect(JSON.stringify(view).length).toBeLessThan(2_000);
+  });
+});
+
+describe('the turn clock', () => {
+  it('grows the finder allowance by TURN_BONUS_MS every time they find a word', () => {
+    const state = withPool(fresh(), 'coastxyzabcd');
+    const player = turnOf(state);
+    const next = act(state, player, { type: 'claim', tiles: idsFor(state, 'coast'), steal: null }).state;
+
+    expect(next.turnAllowanceMs[player]).toBe(TURN_START_MS + TURN_BONUS_MS);
+    // The bonus is theirs alone — it says nothing about how long the other seat's turns are.
+    expect(next.turnAllowanceMs[1 - player]).toBe(TURN_START_MS);
+  });
+
+  it('runs out, hands the turn over as a timeout rather than a chosen pass, and starts a fresh clock', () => {
+    const state = withPool(fresh(), 'zxqvwjkfmbgy', { bag: [...'abc'] });
+    const first = turnOf(state);
+
+    const next = rules.tick(state, state.turnEndsAt!, context).state;
+
+    expect(next.turn).toBe(1 - first);
+    expect(next.passes).toBe(1);
+    expect(next.log.at(-1)).toMatchObject({ by: first, word: null, timedOut: true });
+    expect(next.turnEndsAt).toBe(state.turnEndsAt! + TURN_START_MS);
+  });
+
+  it('freezes on pause and hands back exactly what was left on resume', () => {
+    const state = withPool(fresh(), 'coastxyzabcd');
+    const paused = rules.pause(state, state.turnEndsAt! - 4_000);
+
+    expect(paused.turnEndsAt).toBeNull();
+    expect(paused.turnLeftMs).toBe(4_000);
+
+    const resumed = rules.resume(paused, 100_000, context).state;
+    expect(resumed.turnEndsAt).toBe(100_000 + 4_000);
+    expect(resumed.turnLeftMs).toBeNull();
+  });
+});
+
+describe('hints', () => {
+  it('spends one, points at a real tile, and costs HINT_COST off the score', () => {
+    const state = withPool(fresh(), 'catxyzqjkvbw');
+    const player = turnOf(state);
+    const before = state.hintsLeft[player];
+
+    const next = act(state, player, { type: 'hint' }).state;
+
+    expect(next.hintsLeft[player]).toBe(before - 1);
+    expect(next.hintPenalty[player]).toBe(HINT_COST);
+    expect(next.hint?.player).toBe(player);
+    expect(state.pool.some((tile) => tile.id === next.hint?.tileId)).toBe(true);
+    // It does not cost the turn.
+    expect(next.turn).toBe(player);
+  });
+
+  it('emits an event, or the platform never pushes the new tile to either screen', () => {
+    const state = withPool(fresh(), 'catxyzqjkvbw');
+    const player = turnOf(state);
+
+    const transition = act(state, player, { type: 'hint' });
+
+    expect(transition.events.length).toBeGreaterThan(0);
+  });
+
+  it('is visible only to whoever paid for it', () => {
+    const state = withPool(fresh(), 'catxyzqjkvbw');
+    const player = turnOf(state);
+    const next = act(state, player, { type: 'hint' }).state;
+
+    expect(rules.getView(next, player).hintTileId).toBe(next.hint?.tileId);
+    expect(rules.getView(next, (1 - player) as PlayerIndex).hintTileId).toBeNull();
+  });
+
+  it('refuses once none are left, without spending anything', () => {
+    const base = withPool(fresh(), 'catxyzqjkvbw');
+    const player = turnOf(base);
+    const hintsLeft: [number, number] = [0, 0];
+    const state: WordGameState = { ...base, hintsLeft };
+
+    const next = act(state, player, { type: 'hint' }).state;
+    expect(next.lastRejection[player]).toBe('NO_HINTS_LEFT');
+    expect(next.hintPenalty[player]).toBe(0);
+  });
+
+  it('refuses when nothing on the table can make a word', () => {
+    const state = withPool(fresh(), 'qqqqqqqqqqqq');
+    const player = turnOf(state);
+
+    const next = act(state, player, { type: 'hint' }).state;
+    expect(next.lastRejection[player]).toBe('NO_HINT_AVAILABLE');
+    expect(next.hintsLeft[player]).toBe(state.hintsLeft[player]);
+  });
+
+  it('is cleared the moment the turn changes', () => {
+    const state = withPool(fresh(), 'coastxyzabcd');
+    const player = turnOf(state);
+    const hinted = act(state, player, { type: 'hint' }).state;
+    expect(hinted.hint).not.toBeNull();
+
+    const passed = act(hinted, player, { type: 'pass' }).state;
+    expect(passed.hint).toBeNull();
+  });
+});
+
+describe('the pool on a pass', () => {
+  it('grows toward POOL_MAX before it starts swapping', () => {
+    // Padded to POOL_SIZE rather than a bare literal, so this stays a pool "already at the normal
+    // size" if that constant ever moves.
+    const state = withPool(fresh(), 'coastxyzabcd'.padEnd(POOL_SIZE, 'e'), { bag: [...'aaaaaa'] });
+    const player = turnOf(state);
+
+    const next = act(state, player, { type: 'pass' }).state;
+
+    expect(next.poolTarget).toBe(POOL_SIZE + PASS_LETTERS);
+    expect(next.pool.length).toBe(POOL_SIZE + PASS_LETTERS);
+    expect(next.bag.length).toBe(6 - PASS_LETTERS);
+  });
+
+  it('swaps PASS_LETTERS for fresh ones once the pool is already at POOL_MAX', () => {
+    const base: WordGameState = withPool(fresh(), 'coastxyzabcdefghij'.padEnd(POOL_MAX, 'e'), {
+      bag: [...'aaaaaa'],
+      poolTarget: POOL_MAX,
+    });
+    const player = turnOf(base);
+    const before = new Set(base.pool.map((tile) => tile.id));
+
+    const next = act(base, player, { type: 'pass' }).state;
+
+    expect(next.poolTarget).toBe(POOL_MAX);
+    expect(next.pool).toHaveLength(POOL_MAX);
+    const freshIds = next.pool.map((tile) => tile.id).filter((id) => !before.has(id));
+    expect(freshIds).toHaveLength(PASS_LETTERS);
   });
 });

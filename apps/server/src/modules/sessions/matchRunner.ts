@@ -46,6 +46,14 @@ export interface RunningMatch {
   pause(): void;
   resume(): void;
   result(): GameResult | null;
+  /**
+   * What `getResult` says about the board **right now**, whether or not the match is actually
+   * complete. Every game's `getResult` is a pure read of its own state (`docs/05` — no clock, no
+   * randomness), so asking early is always safe; it is the caller's job to decide whether an
+   * unfinished scoreline means anything. Built for a deliberate concession — "give the points to
+   * the other player" needs the real board, not `result()`'s `null` for a match still in progress.
+   */
+  currentResult(): GameResult;
   /** Drops the timer. The match is over, one way or another. */
   stop(): void;
 }
@@ -183,6 +191,10 @@ export function startMatch({
 
     result() {
       return completed ? rules.getResult(state) : null;
+    },
+
+    currentResult() {
+      return rules.getResult(state);
     },
 
     stop() {

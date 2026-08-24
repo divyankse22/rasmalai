@@ -60,21 +60,30 @@ export function AppNav() {
 
   return (
     <>
-      <button
-        type="button"
-        aria-label="Open menu"
-        aria-expanded={open}
-        aria-controls="app-nav-drawer"
-        onClick={() => setOpen(true)}
-        className="flex size-11 items-center justify-center rounded-pill bg-shell text-ink shadow-soft transition-transform duration-quick ease-bounce active:scale-95 active:bg-blush focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
-      >
-        {/* Drawn rather than an icon font: three rounded bars cost nothing and match the theme. */}
-        <span className="flex flex-col gap-1" aria-hidden="true">
-          <span className="block h-0.5 w-5 rounded-pill bg-ink" />
-          <span className="block h-0.5 w-5 rounded-pill bg-ink" />
-          <span className="block h-0.5 w-5 rounded-pill bg-ink" />
-        </span>
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          aria-label="Open menu"
+          aria-expanded={open}
+          aria-controls="app-nav-drawer"
+          onClick={() => setOpen(true)}
+          className="flex size-11 items-center justify-center rounded-pill bg-shell text-ink shadow-soft transition-transform duration-quick ease-bounce active:scale-95 active:bg-blush focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
+        >
+          {/* Drawn rather than an icon font: three rounded bars cost nothing and match the theme. */}
+          <span className="flex flex-col gap-1" aria-hidden="true">
+            <span className="block h-0.5 w-5 rounded-pill bg-ink" />
+            <span className="block h-0.5 w-5 rounded-pill bg-ink" />
+            <span className="block h-0.5 w-5 rounded-pill bg-ink" />
+          </span>
+        </button>
+
+        <Link
+          href="/dashboard"
+          className="font-display text-lg font-bold text-berry transition-transform duration-quick ease-bounce active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-berry"
+        >
+          Rasmalai
+        </Link>
+      </div>
 
       {/* Always mounted so the slide animation has something to animate, and hidden from assistive
           technology and from the tab order while closed. */}

@@ -350,6 +350,7 @@ describe('disconnect and reconnect', () => {
       theirScore: 0,
       competitive: true,
       byForfeit: true,
+      byGiveUp: false,
     });
     expect(sessions.viewFor(id, ALICE).result).toEqual({
       outcome: 'lost',
@@ -357,6 +358,7 @@ describe('disconnect and reconnect', () => {
       theirScore: 1,
       competitive: true,
       byForfeit: true,
+      byGiveUp: false,
     });
   });
 
@@ -717,6 +719,7 @@ describe('finishing and rematching', () => {
       competitive: true,
       // Won on the board, which is the only kind of win worth printing a scoreline for.
       byForfeit: false,
+      byGiveUp: false,
     });
     expect(theirs.result).toEqual({
       outcome: 'lost',
@@ -724,6 +727,7 @@ describe('finishing and rematching', () => {
       theirScore: 3,
       competitive: true,
       byForfeit: false,
+      byGiveUp: false,
     });
     expect(typesFor(ALICE)).toContain(EVENTS.game.finished);
     expect(typesFor(ALICE)).toContain(EVENTS.results.matchResult);
@@ -849,6 +853,120 @@ describe('leaving on purpose', () => {
       reason: 'left',
       byUserId: ALICE,
     });
+  });
+});
+
+describe('giving up', () => {
+  it('needs nobody’s agreement, unlike leaving', () => {
+    const id = startPlaying();
+    playRound(id, 200, 300);
+
+    // No `leaveRequest` in flight, and no partner response required — the whole point of a
+    // concession over `requestLeave`.
+    expect(() => sessions.giveUp(id, ALICE)).not.toThrow();
+    expect(sessions.viewFor(id, ALICE).leaveRequest).toBeNull();
+  });
+
+  it('awards the real board, not a fabricated 1–0, and always to the other seat', () => {
+    const id = startPlaying();
+    // Alice takes the round, so she is ahead on the real score when she quits anyway.
+    playRound(id, 200, 300);
+    expect(gameView(id, ALICE).yourRoundsWon).toBe(1);
+
+    sessions.giveUp(id, ALICE);
+
+    // Bob wins despite trailing on the board — giving up decides who loses, not the scoreline.
+    expect(sessions.viewFor(id, BOB).result).toEqual({
+      outcome: 'won',
+      yourScore: 0,
+      theirScore: 1,
+      competitive: true,
+      byForfeit: true,
+      byGiveUp: true,
+    });
+    expect(sessions.viewFor(id, ALICE).result).toEqual({
+      outcome: 'lost',
+      yourScore: 1,
+      theirScore: 0,
+      competitive: true,
+      byForfeit: true,
+      byGiveUp: true,
+    });
+  });
+
+  it('lands on the ordinary results screen, rematch and all', () => {
+    const id = startPlaying();
+    sessions.giveUp(id, BOB);
+
+    expect(sessions.viewFor(id, ALICE).phase).toBe('finished');
+    expect(sessions.viewFor(id, ALICE).you.ready).toBe(false);
+    expect(typesFor(ALICE)).toContain(EVENTS.results.matchResult);
+    expect(typesFor(ALICE)).not.toContain(EVENTS.lobby.ended);
+
+    expect(() => {
+      sessions.setReady(id, ALICE, true);
+      sessions.setReady(id, BOB, true);
+    }).not.toThrow();
+    vi.advanceTimersByTime(COUNTDOWN_MS);
+    expect(sessions.viewFor(id, ALICE).phase).toBe('active');
+  });
+
+  it('records it to the database as a walkover, same as a timeout forfeit', () => {
+    const id = startPlaying();
+    sessions.giveUp(id, ALICE);
+
+    const ending = endings().at(-1);
+    expect(ending?.outcome).toMatchObject({ status: 'completed', winnerUserId: BOB, byForfeit: true });
+  });
+
+  it('ends a cooperative game instead of inventing a winner it does not have (P-3)', () => {
+    const registry = createSessionRegistry(
+      {
+        sendToUser(userId, type, payload) {
+          sent.push({ userId, type, payload });
+        },
+      },
+      { isOnline: (userId) => online.has(userId) },
+      { random: () => 0.5, findRules: () => cooperativeRules },
+    );
+
+    const id = registry.create({
+      coupleId: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+      gameSlug: 'boat-escape',
+      gameName: 'Boat Escape',
+      players: [
+        { userId: ALICE, nickname: 'Ali', avatarKey: 'fox', gender: 'female' },
+        { userId: BOB, nickname: 'Bo', avatarKey: 'penguin', gender: 'male' },
+      ],
+    }).id;
+
+    registry.join(id, ALICE);
+    registry.join(id, BOB);
+    registry.setReady(id, ALICE, true);
+    registry.setReady(id, BOB, true);
+    vi.advanceTimersByTime(COUNTDOWN_MS);
+    sent = [];
+
+    registry.giveUp(id, ALICE);
+
+    const ended = sent.find((event) => event.type === EVENTS.lobby.ended);
+    expect(ended?.payload).toMatchObject({ reason: 'gave_up', byUserId: ALICE });
+    expect(registry.sessionIdForUser(BOB)).toBeNull();
+  });
+
+  it('refuses outside an active match — there is nothing to give up yet', () => {
+    const id = startSession();
+    expect(() => sessions.giveUp(id, ALICE)).toThrow(
+      expect.objectContaining({ code: 'invalid_game_state' }),
+    );
+  });
+
+  it('is not something an outsider can do', () => {
+    const id = startPlaying();
+    expect(() =>
+      sessions.giveUp(id, 'dddddddd-dddd-dddd-dddd-dddddddddddd'),
+    ).toThrow(expect.objectContaining({ code: 'not_authorized' }));
+    expect(sessions.viewFor(id, ALICE).phase).toBe('active');
   });
 });
 
@@ -1412,6 +1530,7 @@ describe('a second game, on the same platform', () => {
       theirScore: 0,
       competitive: true,
       byForfeit: false,
+      byGiveUp: false,
     });
     expect(sessions.viewFor(id, loser).result).toEqual({
       outcome: 'lost',
@@ -1419,6 +1538,7 @@ describe('a second game, on the same platform', () => {
       theirScore: 1,
       competitive: true,
       byForfeit: false,
+      byGiveUp: false,
     });
 
     expect(typesFor(winner)).toEqual(

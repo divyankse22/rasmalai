@@ -26,7 +26,6 @@ import {
   TURN_BONUS_MS,
   TURN_START_MS,
   type OwnedWord,
-  type PlayLogEntry,
   type Tile,
   type WordGameAction,
   type WordGameView,
@@ -267,6 +266,26 @@ function still(state: WordGameState): Transition<WordGameState> {
   return { state, events: [] };
 }
 
+/**
+ * What a pass does to the table: grow it toward `POOL_MAX`, or once it is already there, swap
+ * `PASS_LETTERS` of it for fresh ones. One number and one function for the whole dead-end rule — see
+ * `poolTarget`. A swap discards the letters it drops rather than returning them to the bag: the
+ * point is unseen letters, and putting them back would just let `refill` deal them straight out again.
+ */
+function passPool(state: WordGameState, context: GameContext): void {
+  if (state.poolTarget < POOL_MAX) {
+    state.poolTarget = Math.min(state.poolTarget + PASS_LETTERS, POOL_MAX);
+  } else {
+    const dropped = new Set(
+      shuffle(state.pool, context)
+        .slice(0, PASS_LETTERS)
+        .map((tile) => tile.id),
+    );
+    state.pool = state.pool.filter((tile) => !dropped.has(tile.id));
+  }
+  refill(state, context);
+}
+
 const outOfTurns = (state: WordGameState): boolean =>
   state.turnsTaken[0] >= MAX_TURNS_EACH && state.turnsTaken[1] >= MAX_TURNS_EACH;
 
@@ -284,33 +303,61 @@ function withRejection(
   return { ...state, lastRejection };
 }
 
+/**
+ * A refusal the acting player needs to see. Only their own screen changed — `lastRejection` is
+ * per-seat and the opponent's view is untouched — so the event is scoped to them with `to`.
+ *
+ * `still()` is for a transition where nothing player-visible changed at all (an idle `tick`, a
+ * `resume` with nothing to resume). A rejection always changes `lastRejection`, so it must carry an
+ * event or the platform's websocket layer — which pushes a fresh view only when `events` is
+ * non-empty — never tells the rejected player why nothing happened.
+ */
+function rejected(
+  state: WordGameState,
+  player: PlayerIndex,
+  reason: WordRejection,
+): Transition<WordGameState> {
+  return {
+    state: withRejection(state, player, reason),
+    events: [{ type: EVENTS.game.stateUpdated, to: player }],
+  };
+}
+
 export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
   meta,
 
   reconnectPolicy: {
     windowMs: RECONNECT_WINDOW_MS,
-    // Nothing is running down — there is no clock in this game at all — so there is nothing to
-    // freeze. A claimed word is a fact and the pool does not move while somebody is away.
-    pauseOnDisconnect: false,
+    // The turn clock must stop, or somebody's wifi costs them the turn they never got to take.
+    pauseOnDisconnect: true,
     // The one place 120 seconds still bites: an actual disconnect. A competitive game, so the
     // platform hands the win to whoever stayed.
     onExpire: 'forfeit',
   },
 
-  createMatch(_now, context) {
+  createMatch(now, context) {
+    const turn: PlayerIndex = context.random() < 0.5 ? 0 : 1;
     const state: WordGameState = {
       bag: shuffle(BAG, context),
       pool: [],
+      poolTarget: POOL_SIZE,
       nextTileId: 0,
       goldenTileId: null,
       words: [[], []],
       raidPoints: [0, 0],
-      turn: context.random() < 0.5 ? 0 : 1,
+      turn,
       passes: 0,
       used: [],
       turnsTaken: [0, 0],
       lastRejection: [null, null],
       lastPlay: null,
+      turnAllowanceMs: [TURN_START_MS, TURN_START_MS],
+      turnEndsAt: now + TURN_START_MS,
+      turnLeftMs: null,
+      hintsLeft: [HINTS_EACH, HINTS_EACH],
+      hintPenalty: [0, 0],
+      hint: null,
+      log: [],
       complete: false,
     };
 
@@ -333,6 +380,10 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
     }
 
     if (candidate.type === 'pass') return { ok: true, action: { type: 'pass' } };
+    // Whether a hint is actually available to spend is not a shape question — it depends on the
+    // table and this player's own count, both of which `applyAction` already has to consult for
+    // the identical reasons a claim's dictionary check lives there rather than here.
+    if (candidate.type === 'hint') return { ok: true, action: { type: 'hint' } };
 
     if (candidate.type !== 'claim') {
       return { ok: false, code: 'invalid_action', message: 'That is not a move in this game.' };
@@ -373,7 +424,39 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
     return { ok: true, action: { type: 'claim', tiles: [...tiles], steal } };
   },
 
-  applyAction(state, player, action, _at, context) {
+  applyAction(state, player, action, at, context) {
+    const opponent = opponentOf(player);
+
+    if (action.type === 'hint') {
+      // Spending nothing on a hint that cannot be given: refused rather than silently a no-op, the
+      // same softness a bad word gets — the turn stays theirs either way.
+      if (state.hintsLeft[player] <= 0) return rejected(state, player, 'NO_HINTS_LEFT');
+
+      const word = anyMakeableFrom(
+        state.pool.map((tile) => tile.letter),
+        (count) => Math.floor(context.random() * count),
+      );
+      if (word === null) return rejected(state, player, 'NO_HINT_AVAILABLE');
+
+      // Every letter `anyMakeableFrom` counted came out of this exact pool, so a tile with the
+      // word's first letter always exists — which one does not matter, letters are fungible.
+      const tileId = state.pool.find((tile) => tile.letter === word.charAt(0))!.id;
+
+      const hintsLeft: [number, number] = [...state.hintsLeft];
+      hintsLeft[player] -= 1;
+      const hintPenalty: [number, number] = [...state.hintPenalty];
+      hintPenalty[player] += HINT_COST;
+      const lastRejection: [WordRejection | null, WordRejection | null] = [...state.lastRejection];
+      lastRejection[player] = null;
+
+      return {
+        state: { ...state, hintsLeft, hintPenalty, hint: { player, tileId }, lastRejection },
+        // Both screens change: the hint tile is private, but `theirHintsLeft` is public, so the
+        // partner's count has to move on their screen too.
+        events: [{ type: EVENTS.game.stateUpdated }],
+      };
+    }
+
     if (action.type === 'pass') {
       const passes = state.passes + 1;
       const turnsTaken: [number, number] = [...state.turnsTaken];
@@ -383,14 +466,18 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
         ...state,
         passes,
         turnsTaken,
-        turn: opponentOf(player),
+        turn: opponent,
         lastRejection: [null, null],
+        hint: null,
+        log: [...state.log, { by: player, word: null, score: 0, raided: null, timedOut: false }],
       };
-      const complete = isOver(next);
+      passPool(next, context);
+      next.complete = isOver(next);
+      next.turnEndsAt = next.complete ? null : at.receivedAt + next.turnAllowanceMs[opponent];
 
       return {
-        state: { ...next, complete },
-        events: complete
+        state: next,
+        events: next.complete
           ? [{ type: EVENTS.game.finished }]
           : [{ type: EVENTS.game.stateUpdated }],
       };
@@ -403,9 +490,9 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
     // and we do not: a bad word is told to them and the turn stays theirs. Only a legal claim or a
     // pass advances the game.
     const verdict = validateWord(word);
-    if (!verdict.valid) return still(withRejection(state, player, verdict.reason));
+    if (!verdict.valid) return rejected(state, player, verdict.reason);
     if (state.used.includes(word)) {
-      return still(withRejection(state, player, 'ALREADY_USED'));
+      return rejected(state, player, 'ALREADY_USED');
     }
 
     const golden = chosen.some((tile) => tile.golden);
@@ -415,10 +502,12 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
     let words: [OwnedWord[], OwnedWord[]] = [[...state.words[0]], [...state.words[1]]];
     let raidPoints: [number, number] = [...state.raidPoints];
     let returned: Tile[] = [];
+    let raidedWord: string | null = null;
 
     const working: WordGameState = { ...state, nextTileId: state.nextTileId };
 
     if (action.steal !== null) {
+      raidedWord = state.words[opponent][action.steal]!.word;
       const raid = applyRaid(working, player, action.steal);
       words = raid.words;
       raidPoints = raid.raidPoints;
@@ -432,24 +521,31 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
     const turnsTaken: [number, number] = [...state.turnsTaken];
     turnsTaken[player] += 1;
 
+    const turnAllowanceMs: [number, number] = [...state.turnAllowanceMs];
+    turnAllowanceMs[player] += TURN_BONUS_MS;
+
     const next: WordGameState = {
       ...state,
       pool: [...state.pool.filter((tile) => !taken.has(tile.id)), ...returned],
       nextTileId: working.nextTileId,
       words,
       raidPoints,
-      turn: opponentOf(player),
+      turn: opponent,
       // A claim is somebody wanting something, so the pass count starts again.
       passes: 0,
       used: [...state.used, word],
       turnsTaken,
+      turnAllowanceMs,
       lastRejection: [null, null],
       lastPlay: { word, by: player, score, raided: action.steal !== null },
+      hint: null,
+      log: [...state.log, { by: player, word, score, raided: raidedWord, timedOut: false }],
       complete: false,
     };
 
     refill(next, context);
     next.complete = isOver(next);
+    next.turnEndsAt = next.complete ? null : at.receivedAt + next.turnAllowanceMs[opponent];
 
     const events: GameEvent[] = [{ type: EVENTS.game.roundEnded }];
     if (next.complete) events.push({ type: EVENTS.game.finished });
@@ -457,13 +553,45 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
     return { state: next, events };
   },
 
-  // No clock of any kind: the game waits on a person, and never on time passing.
-  tick(state) {
-    return still(state);
+  /**
+   * The turn's own clock running out — the one enforcement mechanism this game has, since `turnOf`
+   * declines the platform's. Treated as exactly the pass it functionally is (turn passes, the pass
+   * count moves, the pool grows or swaps the same way) and logged with `timedOut: true` so the
+   * history can still say which passes somebody chose.
+   */
+  tick(state, now, context) {
+    if (state.complete || state.turnEndsAt === null || now < state.turnEndsAt) return still(state);
+
+    const timedOutPlayer = state.turn;
+    const opponent = opponentOf(timedOutPlayer);
+    const turnsTaken: [number, number] = [...state.turnsTaken];
+    turnsTaken[timedOutPlayer] += 1;
+
+    const next: WordGameState = {
+      ...state,
+      passes: state.passes + 1,
+      turnsTaken,
+      turn: opponent,
+      lastRejection: [null, null],
+      hint: null,
+      log: [...state.log, { by: timedOutPlayer, word: null, score: 0, raided: null, timedOut: true }],
+    };
+    passPool(next, context);
+    next.complete = isOver(next);
+    // From the deadline that just passed, not from `now`: `now` carries whatever lag the timer's
+    // own scheduling added, and stacking that lag turn after turn is how a clock drifts.
+    next.turnEndsAt = next.complete ? null : state.turnEndsAt + next.turnAllowanceMs[opponent];
+
+    return {
+      state: next,
+      events: next.complete
+        ? [{ type: EVENTS.game.finished }]
+        : [{ type: EVENTS.game.stateUpdated }],
+    };
   },
 
-  nextTickAt() {
-    return null;
+  nextTickAt(state) {
+    return state.complete ? null : state.turnEndsAt;
   },
 
   /**
@@ -481,12 +609,23 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
     return null;
   },
 
-  pause(state) {
-    return state;
+  pause(state, now) {
+    if (state.complete || state.turnEndsAt === null) return state;
+
+    return {
+      ...state,
+      turnLeftMs: Math.max(0, state.turnEndsAt - now),
+      turnEndsAt: null,
+    };
   },
 
-  resume(state) {
-    return still(state);
+  resume(state, now) {
+    if (state.complete || state.turnLeftMs === null) return still(state);
+
+    return {
+      state: { ...state, turnEndsAt: now + state.turnLeftMs, turnLeftMs: null },
+      events: [{ type: EVENTS.game.stateUpdated }],
+    };
   },
 
   getView(state, player) {
@@ -511,6 +650,18 @@ export const rules: GameRules<WordGameState, WordGameAction, WordGameView> = {
             raided: state.lastPlay.raided,
           }
         : null,
+      turnEndsAt: state.turnEndsAt,
+      yourTurnLengthMs: state.turnAllowanceMs[player],
+      yourHintsLeft: state.hintsLeft[player],
+      theirHintsLeft: state.hintsLeft[them],
+      hintTileId: state.hint !== null && state.hint.player === player ? state.hint.tileId : null,
+      log: state.log.map((entry) => ({
+        by: entry.by === player ? 'you' : 'them',
+        word: entry.word,
+        score: entry.score,
+        raided: entry.raided,
+        timedOut: entry.timedOut,
+      })),
       complete: state.complete,
     };
   },

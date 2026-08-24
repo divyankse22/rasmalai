@@ -139,6 +139,11 @@ describe('endingMessage', () => {
     );
   });
 
+  it('says who backed off on a give-up, never that they did not come back', () => {
+    expect(endingMessage(ended('gave_up', { byUserId: THEM }))).toBe('Aarav backed off.');
+    expect(endingMessage(ended('gave_up', { byUserId: YOU }))).toBe('You backed off.');
+  });
+
   it('blames nobody when neither of them came back', () => {
     expect(endingMessage(ended('abandoned'))).toBe(
       'Neither of you made it back in time, so this one goes to nobody.',
@@ -160,5 +165,9 @@ describe('returnPathFor', () => {
 
   it('sends a tournament game back to the tournament card', () => {
     expect(returnPathFor(tournament())).toBe('/dashboard#tournament');
+  });
+
+  it('sends a finished series to its own page rather than the tournament card', () => {
+    expect(returnPathFor({ ...tournament(), status: 'completed' })).toBe('/tournament/tournament-id');
   });
 });

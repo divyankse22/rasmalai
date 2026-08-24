@@ -351,6 +351,13 @@ export function attachWebSocketServer(
           return;
         }
 
+        case EVENTS.lobby.giveUp: {
+          const frame = sessionFrame.safeParse(payload);
+          if (!frame.success) return invalidPayload(socket, requestId);
+          sessions!.giveUp(frame.data.sessionId, userId);
+          return;
+        }
+
         case EVENTS.game.actionRequest: {
           const frame = actionFrame.safeParse(payload);
           if (!frame.success) return invalidPayload(socket, requestId);

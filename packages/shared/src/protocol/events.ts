@@ -66,7 +66,15 @@ export const EVENTS = {
      * way out.
      */
     leave: 'lobby.leave',
-    /** The session ended without finishing — a player left, or one of them forfeited. */
+    /**
+     * Client → server: "I concede — the win is theirs." Mid-match only, and needs nobody's
+     * agreement, unlike `leaveRequest`: a leave asks to stop with nothing decided, a give-up decides
+     * it right there. A competitive game ends as a **result** (byGiveUp on `MatchResultView`), the
+     * same walkover shape a timeout-forfeit produces; a game with no winner to award (P-3) ends as
+     * an ending instead (`SessionEndReason` 'gave_up').
+     */
+    giveUp: 'lobby.give_up',
+    /** The session ended without finishing — a player left, or one of them forfeited or gave up. */
     ended: 'lobby.ended',
   },
   presence: {

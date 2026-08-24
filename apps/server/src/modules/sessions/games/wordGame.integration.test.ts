@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { COUNTDOWN_MS, type SessionView } from '@rasmalai/shared';
-import { type WordGameView } from '@rasmalai/games';
+import { WORD_GAME_POOL_SIZE, type WordGameView } from '@rasmalai/games';
 // Reached by relative path on purpose. `packages/games/package.json` publishes only `.`, `./server`
 // and `./client`, so `@rasmalai/games/word-game/dictionary` does not resolve — that exports map is
 // one of the three fences keeping the dictionary out of the browser, and a test is not a reason to
@@ -104,7 +104,7 @@ describe.skipIf(env === null)('word game, through the real registry', () => {
     const sessionId = await startMatch();
     const view = viewOf(sessionId, ctx.alice.id);
 
-    expect(view.pool).toHaveLength(12);
+    expect(view.pool).toHaveLength(WORD_GAME_POOL_SIZE);
     expect(view.pool.filter((tile) => tile.golden)).toHaveLength(1);
     expect(view.bagLeft).toBeGreaterThan(0);
     // Exactly one of them is on the move, and the platform is not policing it with a clock.
@@ -143,6 +143,23 @@ describe.skipIf(env === null)('word game, through the real registry', () => {
       expect(after.yourWords).toEqual([]);
       expect(after.pool).toHaveLength(before.pool.length);
     }
+  });
+
+  it('reaches the acting player over the wire when they spend a hint', async () => {
+    const sessionId = await startMatch();
+    const on = mover(sessionId);
+
+    const framesBefore = ctx.sent.length;
+    send(sessionId, on, { type: 'hint' });
+
+    // The regression this guards: a hint used to change the server's state (`hint`, `hintsLeft`,
+    // or `lastRejection`) without ever emitting an event, so the platform's websocket layer never
+    // pushed a fresh view and the browser had nothing to render — see `rejected` in the rulebook.
+    const framesAfter = ctx.sent.slice(framesBefore);
+    expect(framesAfter.some((frame) => frame.userId === on)).toBe(true);
+
+    const after = viewOf(sessionId, on);
+    expect(after.hintTileId !== null || after.lastRejection === 'NO_HINT_AVAILABLE').toBe(true);
   });
 
   it('refuses a move from the seat whose turn it is not, resolved from a real user id', async () => {

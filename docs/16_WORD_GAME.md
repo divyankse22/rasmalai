@@ -27,16 +27,34 @@ game, and everything below is a consequence.
   whether `snarf` is in it — losing your turn to a guess would make this a game about memorising a
   word list, which is what it is trying not to be.
 - **No word twice**, by either of you, in one match.
+- **A pass also refreshes a stale table.** It grows the pool by three letters (toward a ceiling of
+  eighteen); once the pool is already at that ceiling, a pass instead swaps three of it for fresh
+  ones from the bag. One rule either way, so two people staring at a dead pool are never stuck
+  passing at each other for nothing.
 - **The end.** When the bag is empty and both of you pass in a row. A hard cap of forty turns each
   is the backstop.
-- **The winner** is whoever holds the most: the words they still own, plus their raid bonuses. A
-  word taken off you takes its points with it, so the last thirty seconds matter.
+- **The winner** is whoever holds the most: the words they still own, plus their raid bonuses, minus
+  what they spent on hints. A word taken off you takes its points with it, so the last thirty
+  seconds matter.
 
-**No clock, anywhere.** `turnOf` returns null, so the platform never puts a thinking player on its
-120-second move window — since slice 11 a present player who runs that out **forfeits**, and finding
-a word in twelve letters legitimately takes longer than two minutes. The 120 seconds still applies
-to an actual disconnect, through `reconnectPolicy`; those are different mechanisms and only one of
-them was relaxed.
+**The game keeps its own clock — the platform's never applies.** `turnOf` still returns null, so the
+platform's 120-second move window never puts a thinking player on notice — since slice 11 a present
+player who runs *that* out forfeits, and finding a word in twelve letters legitimately takes longer
+than two minutes. Instead each turn carries its own thirty-second allowance, which grows by five
+seconds, permanently, every time that seat finds a word — the better you are doing, the more room you
+get. Running it out is not a forfeit: it counts as an automatic pass, logged as a timeout rather than
+a choice, and the match's own end conditions (two passes with an empty bag, or the forty-turn cap)
+are what actually end things. The platform's 120 seconds still applies to an actual disconnect,
+through `reconnectPolicy` — a different mechanism, and the only one of the two clocks the game
+declines.
+
+**Hints.** Each player gets three per match. Spending one highlights a tile that can genuinely start
+a word makeable from the current pool, and costs five points — taken off the final score the same way
+a raid adds to it, never off the turn: a hint does not stop the clock or end the turn, because
+charging points for a look at the table should not also charge time for it. Refused rather than
+silently withheld when none are left or nothing at all is makeable, the same softness a wrong word
+gets. Visible only to whoever paid for it; the partner only ever sees how many hints each of you has
+left, the same way the score is public but not how it was arrived at.
 
 ## B. Dictionary strategy
 
@@ -95,7 +113,8 @@ createMatch — shuffle the bag, deal twelve, gild one, coin-flip who starts
 
 ## D. The protocol
 
-`{ type: 'claim', tiles: number[], steal: number | null }` and `{ type: 'pass' }`.
+`{ type: 'claim', tiles: number[], steal: number | null }`, `{ type: 'pass' }`, and
+`{ type: 'hint' }`.
 
 **The word is not on the action.** The client sends tile **ids** and the server derives the letters.
 That is what makes "do you actually possess these letters" structural rather than a check somebody
@@ -121,10 +140,17 @@ no per-game result metadata, so adding them means a schema change for a nice-to-
 
 ## G. Mobile UX
 
-Tap a tile to add it, tap it again to take it back; Clear, Play and Pass are pill buttons in a row;
-the rack wraps rather than scrolls. The golden tile is ringed and labelled for screen readers rather
-than only coloured. The raid picker appears **only** once the word in hand is actually long enough
-to earn one, so the mechanic teaches itself at the moment it becomes relevant.
+Tap a tile to add it, tap it again to take it back — or swipe a finger across a run of tiles to add
+them in one stroke, Boggle-style. Clear, Play, Pass and Hint are pill buttons in a row; the rack
+wraps rather than scrolls. The golden tile is ringed and labelled for screen readers rather than only
+coloured, and so is a hinted tile. The raid picker appears **only** once the word in hand is actually
+long enough to earn one, so the mechanic teaches itself at the moment it becomes relevant.
+
+The swipe path exists because touch input implicitly captures to whichever tile a finger went down
+on — the Pointer Events spec's default for touch, unlike mouse — so the other tiles' own pointer
+events never fire while dragging across them. `client.tsx` releases that capture on `pointerdown`
+and instead asks `document.elementFromPoint` what is actually under the finger on every `pointermove`,
+which is the one piece of it that is not ordinary React event handling.
 
 Desktop typing is deliberately not implemented. The brief lists it as optional, and mapping typed
 letters onto specific tile ids when the pool holds two `E`s is fiddly with no payoff on the device
@@ -132,7 +158,7 @@ this is actually played on.
 
 ## H. Tests
 
-41 unit checks — 33 on the rulebook, 8 on the dictionary — and 4 through the real registry against
+56 unit checks — 44 on the rulebook, 12 on the dictionary — and 5 through the real registry against
 real Postgres. The integration suite proves what the unit tests structurally cannot: that the
 dictionary is enforced **on the server** across a real submission, that whose-turn-it-is survives
 the registry's user-id-to-seat resolution, and that a game the catalogue files as `casual` records a
@@ -154,14 +180,25 @@ than plugin machinery. That is the cheapest form of "open to extension" that is 
 ## Known limitations
 
 - **Nobody has played it.** It joins every other game in the two-account browser run that has never
-  happened (limitations 29–31).
-- **Two idle players stall the match.** With no move clock, a player who neither claims nor passes
-  holds the game open until they actually disconnect. Inherited from the same decision that stops
-  thinkers being forfeited, bounded by the forty-turn cap, and shared with Guess My Answer and Would
-  You Rather on their reveal screens.
+  happened (limitations 29–31) — the turn clock and hints included, since both arrived after the
+  rest of the game and are exercised only by the rulebook tests, never by an actual pair of screens.
+- **Hints were silently dropped by the platform, not by the rulebook.** `applyAction`'s hint branch
+  (and, it turns out, the word-rejection branches it copied the pattern from) returned `still()` —
+  the helper for a transition with `events: []`, meant for a genuine no-op tick or resume. The
+  platform only pushes a fresh view over the websocket when `transition.events` is non-empty
+  (`matchRunner.ts` → `sessionRegistry.ts`), so the server picked a real hint tile every time and
+  neither screen was ever told. Rulebook unit tests read `state`/`getView` directly and could not
+  have caught it; the fix (`rejected`, replacing `still(withRejection(...))`) is covered by a
+  rulebook test asserting `transition.events` and by a real-registry integration test asserting a
+  frame actually reaches the acting player's socket.
 - **A raid cannot be tested through the real registry.** Finding a six-letter word in a random
-  twelve-tile pool is not guaranteed, so the integration suite does not attempt one. The rulebook
-  tests cover raiding thoroughly against hand-built pools.
-- **The bag distribution is a guess.** Sixty tiles, vowel-heavy because twelve face-up letters with
-  no blanks lock into consonant sludge otherwise. Whether it produces good pools is a playtesting
+  pool of `POOL_SIZE` letters is not guaranteed, so the integration suite does not attempt one. The
+  rulebook tests cover raiding thoroughly against hand-built pools.
+- **The bag distribution is a guess.** Sixty tiles, vowel-heavy because face-up letters with no
+  blanks lock into consonant sludge otherwise. Whether it produces good pools is a playtesting
   question, and the array is at the top of `server.ts` for that reason.
+- **`POOL_SIZE`/`POOL_MAX` were raised from 12/18 to 14/20 as a first easier-mode pass** — more
+  letters visible at once means more words are actually makeable from any given deal, at no cost to
+  the vowel-heavy bag ratio or any scoring number. Untested by an actual playthrough, per the first
+  bullet above; if it turns out to be too easy or too crowded a rack, the two constants in
+  `protocol.ts` are the whole knob.
