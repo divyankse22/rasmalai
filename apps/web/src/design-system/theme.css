@@ -4,9 +4,18 @@
  * `docs/01_PRODUCT_SPEC.md` requires the theme to be replaceable later: swap the values in this one
  * file and the entire app reskins. Components must reference these tokens and never hardcode a
  * colour, radius, shadow or duration.
+ *
+ * The structural half of this file (radii, shadows, type scale, spacing rhythm) is derived from
+ * corgilabs.ai — see `ui-clone-workspace/site-dna.md` for the measurements. The palette and the
+ * motion are deliberately NOT: the colours stay pastel and the easing stays springy, so the app
+ * keeps its character while the layout turns crisp.
  */
 @theme {
-  /* Palette: soft, cute, pastel. */
+  /* Palette: soft, cute, pastel.
+     FROZEN. `packages/games/src/reflex/client.tsx` and `basketball/client.tsx` read these at
+     runtime with `getComputedStyle` and parse them with /^#([0-9a-f]{6})$/i. Six-digit hex only —
+     an `oklch()`, `rgb()`, 3-digit or 8-digit value drops both Phaser games to their hardcoded
+     fallbacks silently, with no error anywhere. `theme.test.ts` enforces this. */
   --color-cream: #fff8f2;
   --color-shell: #fffdfb;
   --color-blush: #ffd6e0;
@@ -30,26 +39,90 @@
   --color-status-online: #34c759;
   --color-status-offline: #ff3b30;
 
-  /* Type. System stacks only, so builds stay deterministic and offline-friendly. */
-  --font-display: ui-rounded, 'SF Pro Rounded', 'Nunito', 'Quicksand', system-ui, sans-serif;
-  --font-body: ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
+  /* Type. Self-hosted variable/static woff2 under `app/fonts/`, wired up in `app/fonts.ts` and
+     mounted on <html> by `app/layout.tsx`.
+     Still deterministic and offline-friendly — the files are committed, so `npm run build` never
+     touches the network. That was the reason for system stacks only; the reason survived, the
+     system stacks did not. The old stack remains as the fallback chain. */
+  --font-display: var(--font-poppins), ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
+  --font-body: var(--font-inter), system-ui, -apple-system, 'SF Pro Rounded', sans-serif;
 
-  /* Roundness. Rasmalai has no sharp corners. */
-  --radius-soft: 1rem;
+  /* Roundness. Rasmalai still has no sharp corners, but the corners are tighter than they were:
+     corgi's ladder is 6 / 10 / 12 / 24 / full, and at a 448px column 6 / 10 / 16 / 24 / full reads
+     right — 12px cards look mean this narrow, 16 keeps a trace of the old softness.
+     `--radius-pill` is deliberately unchanged: buttons, avatars, status dots and chips stay pills,
+     which is where most of the app's cuteness actually lives. */
+  --radius-tight: 0.375rem;
+  --radius-soft: 0.625rem;
+  --radius-card: 1rem;
+  --radius-sheet: 1.5rem;
   --radius-pill: 999px;
-  --radius-card: 1.75rem;
 
-  /* Soft, low-contrast depth. */
-  --shadow-soft: 0 8px 24px -12px rgb(61 43 58 / 0.25);
-  --shadow-lift: 0 16px 40px -16px rgb(61 43 58 / 0.32);
+  /* Depth. Wider and far lighter than before, and without the negative spread — definition now
+     comes from the hairline `--color-line` border, not from the shadow. This is the single change
+     that stops cards looking like stickers. */
+  --shadow-soft: 0 8px 30px rgb(61 43 58 / 0.08);
+  --shadow-lift: 0 12px 40px rgb(61 43 58 / 0.12);
 
-  /* Motion. Small and springy; nothing longer than a blink.
+  /* Motion. Small and springy; nothing longer than a blink. Deliberately NOT taken from corgi,
+     which uses a flat cubic-bezier(0.4, 0, 0.2, 1) on all 67 of its transitions — that reads calm
+     and corporate, and the spring on a button press is character worth keeping.
      The namespace is `--transition-duration-*`, not `--duration-*`: `duration-quick` resolves
      against the former, and under the latter every animation in the app silently fell back to
      Tailwind's 150ms default while this file looked like it was in charge. */
   --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
   --transition-duration-quick: 120ms;
   --transition-duration-soft: 240ms;
+
+  /* Type scale, from corgi's ratios mapped down to a phone.
+     The rules that carry the look: -0.025em tracking on large headings, line-height tightening
+     from 1.1 at hero to 1.2 at heading, 1.5–1.625 on body copy, and a hard weight jump (700–800
+     headings against 400 body) with nothing in between.
+     Additive — Tailwind's `text-xs … text-9xl` all still exist, so nothing breaks on day one and
+     `packages/games` (which uses text-sm/text-xl/text-3xl and must not be edited) is unaffected. */
+  --text-hero: 2.5rem;
+  --text-hero--line-height: 1.1;
+  --text-hero--letter-spacing: -0.025em;
+  --text-hero--font-weight: 800;
+
+  --text-title: 2rem;
+  --text-title--line-height: 1.15;
+  --text-title--letter-spacing: -0.02em;
+  --text-title--font-weight: 700;
+
+  --text-heading: 1.5rem;
+  --text-heading--line-height: 1.2;
+  --text-heading--letter-spacing: -0.015em;
+  --text-heading--font-weight: 700;
+
+  --text-subhead: 1.125rem;
+  --text-subhead--line-height: 1.35;
+  --text-subhead--font-weight: 600;
+
+  --text-lede: 1.125rem;
+  --text-lede--line-height: 1.625;
+
+  --text-body: 1rem;
+  --text-body--line-height: 1.5;
+
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.43;
+
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.35;
+  --text-caption--letter-spacing: 0.04em;
+
+  /* Spacing rhythm. Named keys only.
+     Do NOT set the bare `--spacing` token: in Tailwind v4 it is the multiplier behind the entire
+     numeric scale, so changing it would move `min-h-11` off the documented 44px tap-target minimum
+     and resize every glyph inside `packages/games`, which cannot be edited to compensate. */
+  --spacing-gutter: 1.5rem;
+  --spacing-block: 1.25rem;
+  --spacing-section: 2rem;
+  --spacing-hero: 3rem;
+
+  /* The app column. Replaces the literal `max-w-md` repeated across the shell and three routes. */
+  --container-app: 28rem;
 }
 
 /*
