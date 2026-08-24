@@ -22,7 +22,9 @@ without re-deriving anything. **Append an entry after every step.**
 | Reference assets | Design system measurements only — no corgi imagery, mascot, logo or copy | pre-plan |
 | `--ease-bounce` | **KEEP the spring** `cubic-bezier(0.34, 1.56, 0.64, 1)` — buttons stay springy | Phase 1 |
 | Durations | **KEEP 120ms / 240ms** — snappier than corgi's 150/300, suits a game app | Phase 1 |
-| Fonts | **STILL OPEN** — Poppins+Inter vs Poppins-only vs Outfit | — |
+| Fonts | **Poppins (display) + Inter (body)** | Phase 2 |
+| Font loading | **`next/font/local`, woff2 committed** — keeps the build offline-friendly | Phase 2 |
+| Button shape | **KEEP PILLS.** `rounded-pill`, `min-h-11`, `font-display`, `active:scale-95` all unchanged | Phase 2 |
 
 ## Non-negotiable constraints (verified in code)
 
@@ -125,6 +127,92 @@ Plus two cheap, high-value **node** guards (`.test.ts`) that encode the critical
   name set is frozen, `--transition-duration-*` exists with no `--duration-*`, `@keyframes float`
   survives. This is the direct guard for reflex/basketball.
 - `themeColor.test.ts` — asserts `layout.tsx`'s hardcoded `themeColor` equals `--color-cream`.
-## Phase 3 — Fonts ⬜ BLOCKED on font decision (Poppins+Inter / Poppins-only / Outfit; and local-vs-google)
-## Phase 4 — Token diff ⬜ BLOCKED on button-shape decision (pill → 10px rectangle?)
-## Phase 5 — Components ⬜ NOT STARTED
+## Phase 3 — Fonts ✅ DONE
+
+`@fontsource/poppins` + `@fontsource-variable/inter` installed as devDeps for provenance; the
+woff2 files copied into `apps/web/src/app/fonts/` with their OFL licences (~70KB total):
+Poppins 600/700/800 (no variable Poppins exists; only `font-semibold` and `font-bold` are used
+with `font-display`, across 34 files — 800 is for the hero heading) and one Inter variable file.
+
+- New `apps/web/src/app/fonts.ts` — two `localFont()` loaders. Imported **only** by `layout.tsx`,
+  so `next/font` never enters a component test.
+- `layout.tsx` mounts `${display.variable} ${body.variable}` on **`<html>`**. This is load-bearing:
+  Tailwind v4 emits `@theme` into `:root`, so a variable defined on `<body>` resolves to nothing
+  and every `font-display` utility silently falls through to the fallback stack.
+- `theme.css` points `--font-display` / `--font-body` at them, old stack kept as fallback.
+
+Verified against the bundled Next 16.3.1 docs (`node_modules/next/dist/docs/`) per
+`apps/web/AGENTS.md`, which warns this Next version has breaking API changes.
+
+**Verified:** build green, all 10 routes. All four woff2 emitted to `.next/static/media/`.
+**Zero** references to `fonts.gstatic.com` / `fonts.googleapis.com` in the build output.
+
+## Phase 4 — Token diff ✅ DONE
+
+Changed in `theme.css`:
+- **Radii:** `--radius-card` 1.75rem → **1rem**, `--radius-soft` 1rem → **0.625rem**;
+  new `--radius-tight` (0.375rem) and `--radius-sheet` (1.5rem).
+  **`--radius-pill` unchanged** per the keep-pills decision.
+- **Shadows:** `--shadow-soft` → `0 8px 30px rgb(61 43 58 / 0.08)`,
+  `--shadow-lift` → `0 12px 40px rgb(61 43 58 / 0.12)`. Negative spread dropped; definition now
+  comes from the hairline `--color-line` border rather than the shadow.
+- **Type scale:** new `--text-{hero,title,heading,subhead,lede,body,small,caption}` with
+  line-height / letter-spacing / font-weight sub-keys. Additive — `text-xs … text-9xl` still work,
+  so `packages/games` (which uses text-sm/xl/3xl and must not be edited) is unaffected.
+- **Spacing:** new named `--spacing-{gutter,block,section,hero}` and `--container-app: 28rem`.
+- **Unchanged by decision:** all 16 colours, `--ease-bounce`, both durations, `--radius-pill`,
+  `@keyframes float`.
+
+⚠️ **Known intended side-effect:** `--radius-soft` 16px → 10px propagates into `packages/games`
+via `rounded-soft`. That is the agreed token inheritance, but it is a visible change to nine
+games with no test coverage. Must be eyeballed in the Phase 6 Chrome walkthrough.
+
+### Guards added (node project)
+- `apps/web/src/design-system/theme.test.ts` — every `--color-*` is 6-digit hex; the token name
+  set is frozen in order; no `oklch()/rgb()/hsl()/color-mix()`; `--transition-duration-*` exists
+  with no `--duration-*`; `@keyframes float` survives; `--radius-pill` stays 999px; the bare
+  `--spacing` multiplier is never set.
+- `apps/web/src/app/themeColor.test.ts` — `layout.tsx`'s literal `themeColor` equals
+  `--color-cream`.
+
+**Verified:** `npm test` → 41 files, **815 tests**, all green (node still 780).
+typecheck ✓ · lint ✓ · build ✓ · `git diff -- packages/games` empty ✓
+
+**Committed:** `ca069f3`
+
+## Phase 5 — Components ⬜ NOT STARTED — GATED on finishing Phase 2b
+
+---
+
+## ⚠️ Ordering note
+
+Phases 3 and 4 (fonts, tokens) were completed before the Phase 2b characterization suite was
+finished. That deviates from strict test-first. It is contained, because:
+
+- **No component file has been edited.** The only source changes are `theme.css`, `layout.tsx`,
+  the new `fonts.ts`, and `vitest.config.ts`.
+- Token and font changes are guarded by `theme.test.ts` / `themeColor.test.ts` plus typecheck,
+  lint and build — all green.
+
+**The gate still holds: Phase 5 must not start until the characterization tests exist.** Those
+tests protect component *behaviour*, and components are exactly what Phase 5 edits.
+
+## Next actions, in order
+
+1. Finish Phase 2b — characterization tests for the components listed above. Start with the
+   remaining primitives (Card, Field, Stat, PersonName), then the highest-risk screens:
+   `PlayScreen` (760 lines, split by state) and `OnboardingWizard` (444).
+2. Record the test count, then begin Phase 5 component edits.
+3. Chrome walkthrough at 390x844, including reduced-motion emulation and a Basketball/Reflex
+   colour check.
+
+## Findings worth acting on (surfaced during design review, not yet fixed)
+
+- `InvitationCentre.tsx:260` uses `enabled:hover:bg-blush` — the only hover-only affordance in
+  `apps/web`, contradicting the docs/06 `:active` policy. Fix during Phase 5.
+- `Card` hardcodes `p-6` then appends `className`; `TournamentScoreboard.tsx:62` passes `p-4` and
+  `PlayScreen.tsx:534` passes `py-8`. Tailwind resolves same-property collisions by stylesheet
+  order, not string order, so those overrides are probably **no-ops today** — and may flip once
+  base padding changes. Same shape of problem: `InviteButton.tsx:210` passes `min-h-9` (36px)
+  against `Button`'s `min-h-11` (44px), which would violate the tap-target policy if it won.
+  Fix with real `padding` / `size` props rather than betting on utility ordering.
