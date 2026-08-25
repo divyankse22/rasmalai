@@ -1,4 +1,11 @@
-import { EVENTS, type Envelope, type SessionView } from '@rasmalai/shared';
+import {
+  EVENTS,
+  type Envelope,
+  type GameSnapshot,
+  type MatchResultView,
+  type SessionView,
+  type TournamentView,
+} from '@rasmalai/shared';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -45,6 +52,34 @@ function push(session: SessionView): void {
     mocks.listener?.({ type: EVENTS.lobby.joined, ts: Date.now(), payload: { session } });
   });
 }
+
+const tournament = (over: Partial<TournamentView> = {}): TournamentView => ({
+  id: 'tour-1',
+  name: 'Sunday series',
+  status: 'active',
+  direction: 'outgoing',
+  games: [],
+  currentPosition: 1,
+  yourTotalPoints: 3,
+  partnerTotalPoints: 1,
+  winner: null,
+  pausedUntil: null,
+  expiresAt: null,
+  ...over,
+});
+
+const result = (over: Partial<MatchResultView> = {}): MatchResultView => ({
+  outcome: 'won',
+  yourScore: 3,
+  theirScore: 2,
+  competitive: true,
+  byForfeit: false,
+  byGiveUp: false,
+  ...over,
+});
+
+/** A live game of `slug`. The state is opaque here — `GameMount` is stubbed. */
+const snapshot = (slug: string): GameSnapshot => ({ slug, state: {} });
 
 beforeEach(() => {
   mocks.send.mockClear();
@@ -122,5 +157,156 @@ describe('PlayScreen in the lobby', () => {
     push(sessionView());
 
     expect(screen.getByRole('button', { name: 'React with ❤️' })).toBeInTheDocument();
+  });
+});
+
+describe('PlayScreen counting down', () => {
+  it('renders the countdown as a live timer and says why', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ phase: 'countdown', startsAt: Date.now() + 3_000 }));
+
+    expect(screen.getByRole('timer')).toBeInTheDocument();
+    expect(screen.getByText('Both ready — here we go')).toBeInTheDocument();
+  });
+
+  it('offers no ready button while it is counting down', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ phase: 'countdown', startsAt: Date.now() + 3_000 }));
+
+    expect(screen.queryByRole('button', { name: "I'm ready ✨" })).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayScreen while a match is running', () => {
+  const active = () => sessionView({ phase: 'active', game: snapshot('memory') });
+
+  it('hands the game to the mount', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(active());
+
+    expect(screen.getByTestId('game-mount')).toHaveTextContent('memory');
+  });
+
+  it('puts the two player chips away once the game has the screen', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(active());
+
+    expect(screen.queryByText('Divs')).not.toBeInTheDocument();
+  });
+
+  it('names whose move it is, with a timer, when the game has turns', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(
+      sessionView({
+        phase: 'active',
+        game: snapshot('four-in-a-row'),
+        turnUserId: 'you',
+        turnDeadline: Date.now() + 60_000,
+      }),
+    );
+
+    expect(screen.getByText('Your move')).toBeInTheDocument();
+    expect(screen.getAllByRole('timer').length).toBeGreaterThan(0);
+  });
+
+  it('says nothing about a move for a game with no turns', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(active());
+
+    expect(screen.queryByText('Your move')).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayScreen on the results screen', () => {
+  it('offers a rematch when neither of you has asked yet', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ phase: 'finished', result: result() }));
+
+    expect(screen.getByRole('button', { name: 'Rematch ✨' })).toBeInTheDocument();
+    expect(screen.getByText('A rematch needs both of you to say so.')).toBeInTheDocument();
+  });
+
+  it('turns the offer into an answer when they asked first', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(
+      sessionView({
+        phase: 'finished',
+        result: result(),
+        partner: player({ userId: 'them', nickname: 'Sam', gender: 'male', ready: true }),
+      }),
+    );
+
+    expect(screen.getByRole('button', { name: 'Accept the rematch' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Decline the rematch' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rematch ✨' })).not.toBeInTheDocument();
+  });
+
+  it('declining a rematch leaves the session and says so', async () => {
+    const user = userEvent.setup();
+    render(<PlayScreen sessionId="session-1" />);
+    push(
+      sessionView({
+        phase: 'finished',
+        result: result(),
+        partner: player({ userId: 'them', nickname: 'Sam', gender: 'male', ready: true }),
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Decline the rematch' }));
+
+    expect(mocks.send).toHaveBeenCalledWith(EVENTS.lobby.leave, { sessionId: 'session-1' });
+    expect(screen.getByText('No rematch — heading back.')).toBeInTheDocument();
+  });
+
+  it('keeps the finished game on screen so the round-by-round is still there', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ phase: 'finished', result: result(), game: snapshot('memory') }));
+
+    expect(screen.getByTestId('game-mount')).toBeInTheDocument();
+  });
+
+  it('says "next game" rather than "rematch" inside a series', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ phase: 'finished', result: result(), tournament: tournament() }));
+
+    expect(screen.getByRole('button', { name: 'Next game →' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rematch ✨' })).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayScreen inside a tournament', () => {
+  it('links to the series with the running score', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ tournament: tournament({ yourTotalPoints: 3, partnerTotalPoints: 1 }) }));
+
+    const link = screen.getByRole('link', { name: /Series/ });
+    expect(link).toHaveAttribute('href', '/tournament/tour-1');
+    expect(link).toHaveTextContent('3–1');
+  });
+
+  it('drops the running link once the series is over', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ tournament: tournament({ status: 'completed' }) }));
+
+    expect(screen.queryByRole('link', { name: /Series/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayScreen when the partner is away', () => {
+  it('stops offering the lobby while they are gone', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(
+      sessionView({
+        partner: player({
+          userId: 'them',
+          nickname: 'Sam',
+          gender: 'male',
+          present: false,
+          awayUntil: Date.now() + 120_000,
+        }),
+      }),
+    );
+
+    expect(screen.queryByRole('button', { name: "I'm ready ✨" })).not.toBeInTheDocument();
   });
 });
