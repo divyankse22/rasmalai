@@ -194,10 +194,29 @@ don't — rather than re-testing the button, which owns its own file.
 Note: `yourBestScore` is `null`-checked rather than falsy-checked, because **zero is a real score**.
 The test pins the null case so a later `if (!best)` refactor fails loudly.
 
+**Batch 5 — PlayScreen ✅ COMPLETE.** 34 web tests in one file, the biggest single item on this
+list and the one everything else was waiting behind (760 lines, previously untested).
+
+`PlayScreen` takes no session prop — the view arrives over the socket — so the harness mocks
+`@/realtime/RealtimeProvider` and holds the listener the component registers, driving state by
+calling it with a `lobby.joined` frame. Only the **latest** listener is kept: the component
+re-registers on every render, and a stale closure asserts against a render that is no longer on
+screen. `next/navigation` and `@/games/GameMount` are mocked too — the latter resolves renderers
+through a dynamic import. New `apps/web/src/test/sessionFixture.ts` holds `player()` and
+`sessionView()` builders so every test starts from one valid `SessionView`.
+
+Covered: the loading state, the lobby and both ready labels, the countdown timer, the active phase
+handing off to the mount, the move-clock readout appearing **only** for a game with turns, the
+results screen, the **rematch response** (partner ready, you not) as distinct from the rematch
+offer, "Next game" rather than "Rematch" inside a series, the series link and its disappearance
+once the series is over, and the lobby vanishing while the partner is away.
+
+Six of these then had to learn to dismiss the How to Play screen, which is the suite working: the
+behaviour genuinely moved and the tests are what made it visible. No assertion was weakened.
+
 Still to write: OnboardingWizard,
-PairingPanel, InvitationCentre, TournamentRequestCentre, SessionWatch, PlayScreen (split by state),
-TournamentScreen/Scoreboard, CreateTournamentModal, GameCatalogue, InviteButton, CoupleHeader,
-PlayTeaser, StatsPanels, TournamentCard, GameMount, GameErrorBoundary.
+PairingPanel, InvitationCentre, TournamentRequestCentre, SessionWatch,
+TournamentScreen/Scoreboard, CreateTournamentModal, TournamentCard, GameMount, GameErrorBoundary.
 
 Plus two cheap, high-value **node** guards (`.test.ts`) that encode the critical constraints:
 - `theme.test.ts` — reads `theme.css` as text; asserts every `--color-*` is 6-digit hex, the token
@@ -308,10 +327,10 @@ and note the node project's `testTimeout` is 20s and can be raised.
 
 ## ⏸️ RESUME HERE
 
-Last commit: see `git log`. Tree clean. **52 test files, 905 tests, all green** (node 804, web 101).
+Last commit: see `git log`. Tree clean. **55 test files, 1000 tests, all green** (node 850, web 150).
 
-Phase 2b is roughly half done. Next file to write is `StatsPanels.test.tsx` — the source has just
-been read, and the behaviours worth pinning are:
+`PlayScreen` is done (batch 5 above). The next file to write is `StatsPanels.test.tsx` — the source
+has been read, and the behaviours worth pinning are:
 - Three panels, each an `<h2>`: "This week", "Head to head", "All together".
 - **Empty states are separate branches**, not zeroes: `lastSevenDays.gamesPlayed === 0` and
   `competitive.gamesPlayed === 0` each render their own sentence instead of a grid of noughts.
@@ -326,9 +345,8 @@ been read, and the behaviours worth pinning are:
 
 ## Next actions, in order
 
-1. Finish Phase 2b — characterization tests for the components listed above. Start with the
-   remaining primitives (Card, Field, Stat, PersonName), then the highest-risk screens:
-   `PlayScreen` (760 lines, split by state) and `OnboardingWizard` (444).
+1. Finish Phase 2b — characterization tests for the components listed above. The primitives and
+   `PlayScreen` are done; the highest-risk one left is `OnboardingWizard` (444 lines).
 2. Record the test count, then begin Phase 5 component edits.
 3. Chrome walkthrough at 390x844, including reduced-motion emulation and a Basketball/Reflex
    colour check.

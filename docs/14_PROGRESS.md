@@ -6,7 +6,7 @@ knowingly incomplete.
 
 Update it at the end of every slice.
 
-Last updated: after slice 13 — Word Game, and the first dictionary.
+Last updated: after the restyle's first half and the How to Play screen.
 
 ---
 
@@ -29,9 +29,11 @@ Last updated: after slice 13 — Word Game, and the first dictionary.
 | 11 | Integration lane: five games through the real registry against real Postgres; tournament stalling rule | **done, verified** against the live database |
 | 12 | Would You Rather: asymmetric ask/answer/predict, 60-dilemma deck, competitive scoring | **done**, automated gate green; two-account browser run outstanding |
 | 13 | Word Game: SCOWL dictionary, raid stealing, golden tile, comeback rule | **done**, automated gate green; two-account browser run outstanding |
+| R | Restyle: DOM test harness, self-hosted fonts, token diff, pink/blue rebalance, swipeable catalogue | **in progress** — phases 1–4 done, component edits partly done, Chrome walkthrough outstanding |
+| H | How to Play: a game's own rules, full screen, once per session | **done**, automated gate green; two-account browser run outstanding |
 | 14+ | Boat Escape, mobile polish, deployment | not started |
 
-Gate at the time of writing: **738 tests passing**, typecheck, lint and both builds green
+Gate at the time of writing: **1000 tests in 55 files** — 850 node, 150 jsdom — typecheck, lint and both builds green
 (`npm run verify`), plus **34 integration checks in 8 files** against real Postgres
 (`npm run test:integration`) — real matches played through the real session registry by throwaway
 Supabase accounts, created, paired and deleted by the run itself.
@@ -56,6 +58,116 @@ the platform layer and no `GameRules` contract changed. Covered by rulebook-adja
 `sessionRegistry.test.ts` (real board score, forced winner regardless of who is currently ahead,
 P-3 split, authorization) and `sessionEnding.test.ts`; not yet through a two-account browser run,
 same as everything else on that list.
+
+---
+
+## How to Play: nine games that can now introduce themselves
+
+Nine games, and until now not one of them explained itself anywhere. The catalogue card carried a
+line of marketing copy from the `0004` seed and that was the whole of it; after that a player was
+dropped onto a board and left to work out what the buttons did. Word Game has six real rules and
+Would You Rather has a three-phase round, and both taught them by letting you get them wrong.
+
+**Two findings made it much cheaper than it looked**, and both are worth keeping because they are
+facts about the platform rather than about this feature.
+
+*"Never on a rematch" needs nothing stored.* A rematch does not return the session to `lobby` —
+`maybeStartCountdown` counts down from `finished` as readily as from the lobby, and
+`abandonCountdown` restores `finished` too. So `phase === 'lobby'` occurs **exactly once per
+session**, before the first match, and that is the entire gate. No `matchesPlayed` counter, no new
+`SessionView` field, no migration, and no client-side bookkeeping that could drift from the server.
+A tournament game is a fresh session in `lobby`, so each game of a series introduces itself, which
+is what a seven-game evening wants.
+
+*"Blocking" needs no modal machinery.* The rules **replace** the lobby rather than floating over
+it, so there is no dialog role, no focus trap, no `inert` and no `aria-modal`. The property that
+matters — nobody is counted down into a game they are still reading about — falls out of the ready
+button not existing yet, rather than out of an overlay swallowing clicks. That is a structurally
+stronger guarantee than a modal, and about forty fewer lines.
+
+**`GameMeta.howToPlay` is required, not optional.** A game that cannot explain itself should not
+ship, and the compiler proved the point within a minute: adding the field failed typecheck on a
+stand-in `GameMeta` inside `matchRunner.test.ts` that nobody would have thought to update. Numbers
+in the copy are interpolated from each game's own `protocol.ts` constants, so changing a constant
+changes the sentence rather than quietly making the rules a lie.
+
+**The copy describes the game and never the platform.** The move clock, the 120-second reconnect
+window, forfeits, Give Up and reactions apply to many games at once and belong to the platform;
+repeating them in nine files is nine places to drift. A player meets them on screen, where they are
+already explained.
+
+**Bomb Defusal was the constraint that shaped the design.** Its manual reaches the expert's screen
+and nobody else's, on purpose — a defuser who can read it defuses the bomb alone, and then there is
+no cooperative game left in the product. A per-seat rules page would have put the burden of not
+leaking on every future game's prose. One shared page describing only the *shape* — one of you has
+the bomb, the other the manual, you cannot see each other's screen, the taps are how you talk —
+cannot leak by construction. `howToPlay.test.ts` imports `MANUAL_TEXT` from the rulebook rather
+than re-typing it, and checks distinctive fragments as well as whole sentences, because the leak
+worth guarding against is a paraphrase rather than a paste.
+
+**`PlayScreen` finally has tests.** 760 lines, the largest untested component in the app, and the
+file this feature edits — so its characterization suite was written first, and six of those tests
+then had to learn to dismiss the rules. That is the point of characterization tests rather than a
+failure of them: the behaviour moved on purpose, and the suite is what made it visible instead of
+letting it pass unnoticed. No assertion was weakened to get there.
+
+---
+
+## The restyle: corgilabs.ai structure over the existing pastel palette
+
+Tracked in full in `ui-clone-workspace/PROGRESS.md`, which is the working log; this is the summary
+the numbered docs were missing entirely.
+
+**A DOM test harness exists now, and `vitest.config.ts` is two projects.** The file extension routes
+the environment — `*.test.ts` to node, `*.test.tsx` to jsdom — which matters more than it sounds:
+the previous single-project config included only `*.test.ts`, so a `.tsx` test would have been
+collected by no project at all and silently never run. Green suite, zero coverage. The harness
+exists because a restyle needs a regression net, and the standing rule for every file in it is that
+it asserts roles, accessible names, text and callbacks and **never** class names or computed
+colours. A test that needs editing to go green means behaviour moved.
+
+**Fonts are self-hosted.** Poppins for display, Inter for body, through `next/font/local` with the
+woff2 files committed. The build output carries **zero** references to `fonts.googleapis.com` or
+`fonts.gstatic.com`. The variables mount on `<html>` rather than `<body>`, which is load-bearing:
+Tailwind v4 emits `@theme` into `:root`, so a variable defined on `<body>` resolves to nothing and
+every `font-display` utility silently falls through to the fallback stack.
+
+**Two constraints govern every colour token, and both have bitten before.**
+
+- **Six-digit hex only.** `reflex/client.tsx` and `basketball/client.tsx` read the palette at
+  runtime through `getComputedStyle` and parse with `/^#([0-9a-f]{6})$/i`. An `oklch()`, an
+  `rgb()`, a three-digit or an eight-digit hex drops both Phaser games to hardcoded fallbacks with
+  **no error at all**. `theme.test.ts` reads the stylesheet as text and holds the whole token set
+  to it.
+- **`--transition-duration-*`, never `--duration-*`.** Tailwind resolves `duration-quick` against
+  the former. This regression has already happened once, and while it was live every animation in
+  the app fell back to 150ms while the theme file looked like it was in charge.
+
+**Radii and shadows moved; colours did not.** `--radius-card` 1.75rem to 1rem and `--radius-soft`
+1rem to 0.625rem, with definition now coming from a hairline `--color-line` border rather than from
+the shadow. One **known intended side-effect**: `--radius-soft` propagates into `packages/games`
+through `rounded-soft`, which is the agreed token inheritance but is a visible change to nine games
+with no visual coverage. It has to be eyeballed in the Chrome walkthrough.
+
+**The palette was rebalanced pink/blue.** Pink had 68 usages app-wide and blue was effectively
+absent — `--color-sky` was defined and never used, and the only real blue on screen was
+`--color-name-male`, which is not a brand colour at all but the gender-name system's. There was no
+saturated blue analogous to berry, so blue had nothing to *be*. `--color-blueberry` and
+`--color-blueberry-deep` fill that gap, verified by WCAG contrast maths rather than by eye, and
+`Button`'s soft and ghost variants moving to the blue family flips roughly half the app's 44 call
+sites — every dismissive or secondary action — without touching a single gender-tied colour. Pink
+was deliberately kept for every `role="alert"`, every live in-the-moment value, and all thirteen
+`focus-visible` rings.
+
+**The wordmark is one component, and no longer borrows the gender palette.** "Ras" in
+`--color-blueberry-deep`, "malai" in berry, rendered by `Wordmark.tsx` at all three sites. Its test
+asserts raw `textContent` is exactly `"Rasmalai"` — a normalizing matcher would collapse the very
+stray space the test exists to catch.
+
+**What is not done:** the second half of the characterization suite (`OnboardingWizard`,
+`InvitationCentre`, `PairingPanel`, `StatsPanels`, the tournament screens), the bulk of the
+component edits, and the Chrome walkthrough at 390x844 including reduced-motion emulation and the
+Basketball/Reflex colour check.
 
 ---
 
@@ -1371,6 +1483,23 @@ output — not two people playing. Limitations 28–32 say what that leaves.
    ceiling only costs time when a test is genuinely hung. Verified with three consecutive
    `npm run verify` runs and three coverage runs, all green. The deeper fix — one server per file
    rather than per test — is still available if these ever get slow enough to matter.
+
+36. **Nobody has read a How to Play screen in a browser.** It is covered in jsdom — that it opens
+   the session, that the ready button is genuinely unreachable behind it, that it never returns for
+   a rematch, that a game with no module falls through — and the copy is held to its length budget
+   and to the Bomb Defusal leak guard by the node suite. What no test can answer is whether five
+   steps is the right amount to read before a game you are excited to start, and whether a
+   seven-game tournament asking seven times grates. Those are the browser run's questions, and it
+   joins slices 7c and 8–13 in the same sitting.
+
+37. **The restyle has never been looked at.** Every visual change since `ca069f3` — the radius and
+   shadow diff, the self-hosted fonts, the pink/blue rebalance, the swipeable catalogue, the
+   wordmark — is verified by tests that deliberately assert **no** class name and **no** computed
+   colour, plus a `theme.css` text guard. That is the right kind of coverage and it says nothing
+   whatsoever about how any of it looks. Two specific things need eyes rather than assertions: the
+   `--radius-soft` change propagating into nine games through `rounded-soft`, and the two Phaser
+   clients still parsing the palette correctly at runtime, since a silent fallback there produces
+   no error of any kind.
 
 ---
 
