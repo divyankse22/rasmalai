@@ -37,7 +37,9 @@ BEFORE modifying or creating application code:
 - Node.js + TypeScript WebSocket backend
 - Google OAuth
 - PostgreSQL via Supabase
-- Netlify for frontend
+- Vercel for frontend (switched from the original Netlify pick: a fresh Netlify account's 2026 free
+  tier is credit-based, ~15GB/month effective bandwidth, and pauses the site on overage; Vercel's
+  Hobby plan is a flat 100GB with first-party Next.js support — decided with the user 2026-08-25)
 - Render for backend
 - Dockerize the backend
 - Local development first
