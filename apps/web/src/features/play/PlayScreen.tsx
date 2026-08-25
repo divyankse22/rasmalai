@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { findGameMeta } from '@rasmalai/games';
 import {
   EVENTS,
   REACTIONS,
@@ -22,6 +23,7 @@ import { Card } from '@/design-system/Card';
 import { PersonName } from '@/design-system/PersonName';
 import { gameGlyph } from '@/features/dashboard/gameGlyphs';
 import { avatarGlyph } from '@/features/onboarding/avatars';
+import { HowToPlayScreen } from '@/features/play/HowToPlayScreen';
 import { RETURN_DELAY_MS, endingMessage, returnPathFor } from '@/features/play/sessionEnding';
 import { formatClock, useCountdown } from '@/features/play/useCountdown';
 import { GameMount } from '@/games/GameMount';
@@ -172,6 +174,18 @@ function ResultBanner({ result, partner }: { result: MatchResultView; partner: S
   );
 }
 
+/** The glyph and the game's name, above whatever the screen is currently showing. */
+function GameTitle({ slug, name }: { slug: string; name: string }) {
+  return (
+    <div className="flex items-center justify-center gap-2">
+      <span className="text-2xl" aria-hidden="true">
+        {gameGlyph(slug)}
+      </span>
+      <h1 className="font-display text-xl font-bold text-ink">{name}</h1>
+    </div>
+  );
+}
+
 export function PlayScreen({ sessionId }: { sessionId: string }) {
   const router = useRouter();
   const { send, status } = useRealtime();
@@ -180,6 +194,13 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
   /** Where an ended session puts you, and when. Both null until there is an ending to leave. */
   const [returnTo, setReturnTo] = useState<string | null>(null);
   const [returnAt, setReturnAt] = useState<number | null>(null);
+  /**
+   * The session whose rules this reader has dismissed, or null.
+   *
+   * A session id rather than a boolean: the next game of a tournament is a different session at the
+   * same route, and a boolean would carry the last game's dismissal into it.
+   */
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
   const [confirmingGiveUp, setConfirmingGiveUp] = useState(false);
   const [floating, setFloating] = useState<FloatingReaction[]>([]);
@@ -484,6 +505,32 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
     );
   }
 
+  /**
+   * The rules, once per session, before anything else.
+   *
+   * `phase === 'lobby'` is the whole condition and needs nothing stored: a rematch counts down from
+   * `finished` and never returns here, so this phase already means "before the first match". It is
+   * also what makes this safe — the ready button does not exist yet, so nobody can be counted down
+   * into a game they are still reading about.
+   *
+   * A game with no module registered falls through to the lobby rather than rendering an empty
+   * page. Unreachable in practice, since a session cannot open without a rulebook, but it is the
+   * harmless direction to fail.
+   */
+  const gameMeta = findGameMeta(session.gameSlug);
+  if (session.phase === 'lobby' && gameMeta && dismissedFor !== session.id) {
+    return (
+      <main className="relative flex flex-1 flex-col gap-4">
+        <GameTitle slug={session.gameSlug} name={session.gameName} />
+        <HowToPlayScreen
+          howToPlay={gameMeta.howToPlay}
+          gameName={session.gameName}
+          onDismiss={() => setDismissedFor(session.id)}
+        />
+      </main>
+    );
+  }
+
   const waitingForPartner = session.partner.awayUntil !== null;
   const playing = session.phase === 'active' || session.phase === 'finished';
   const tournament = session.tournament;
@@ -497,12 +544,7 @@ export function PlayScreen({ sessionId }: { sessionId: string }) {
 
   return (
     <main className="relative flex flex-1 flex-col gap-4">
-      <div className="flex items-center justify-center gap-2">
-        <span className="text-2xl" aria-hidden="true">
-          {gameGlyph(session.gameSlug)}
-        </span>
-        <h1 className="font-display text-xl font-bold text-ink">{session.gameName}</h1>
-      </div>
+      <GameTitle slug={session.gameSlug} name={session.gameName} />
 
       {/* The full standings live on the tournament's own page, not here — this screen stays focused
           on the game being played. Just enough to say where things stand and how to get there. */}

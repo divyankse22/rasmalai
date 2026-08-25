@@ -81,6 +81,11 @@ const result = (over: Partial<MatchResultView> = {}): MatchResultView => ({
 /** A live game of `slug`. The state is opaque here — `GameMount` is stubbed. */
 const snapshot = (slug: string): GameSnapshot => ({ slug, state: {} });
 
+/** Gets past the rules screen, which now opens every session before its first match. */
+async function dismissRules(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: 'Got it ✨' }));
+}
+
 beforeEach(() => {
   mocks.send.mockClear();
   mocks.routerPush.mockClear();
@@ -117,17 +122,21 @@ describe('PlayScreen in the lobby', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument();
   });
 
-  it('offers to mark you ready, and says so when they already are', () => {
+  it('offers to mark you ready, and says so when they already are', async () => {
+    const user = userEvent.setup();
     render(<PlayScreen sessionId="session-1" />);
     push(sessionView({ partner: player({ userId: 'them', nickname: 'Sam', ready: true }) }));
+    await dismissRules(user);
 
     expect(screen.getByText('They are ready and waiting for you.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: "I'm ready ✨" })).toBeInTheDocument();
   });
 
-  it('asks you to tell them when the partner is not ready yet', () => {
+  it('asks you to tell them when the partner is not ready yet', async () => {
+    const user = userEvent.setup();
     render(<PlayScreen sessionId="session-1" />);
     push(sessionView());
+    await dismissRules(user);
 
     expect(screen.getByText('Tell them when you are ready.')).toBeInTheDocument();
   });
@@ -136,6 +145,7 @@ describe('PlayScreen in the lobby', () => {
     const user = userEvent.setup();
     render(<PlayScreen sessionId="session-1" />);
     push(sessionView());
+    await dismissRules(user);
 
     await user.click(screen.getByRole('button', { name: "I'm ready ✨" }));
     expect(mocks.send).toHaveBeenCalledWith(EVENTS.lobby.playerReady, { sessionId: 'session-1' });
@@ -144,17 +154,21 @@ describe('PlayScreen in the lobby', () => {
     expect(screen.getByRole('button', { name: 'Not ready after all' })).toBeInTheDocument();
   });
 
-  it('shows both people while nothing is being played', () => {
+  it('shows both people while nothing is being played', async () => {
+    const user = userEvent.setup();
     render(<PlayScreen sessionId="session-1" />);
     push(sessionView());
+    await dismissRules(user);
 
     expect(screen.getByText('Divs')).toBeInTheDocument();
     expect(screen.getByText('Sam')).toBeInTheDocument();
   });
 
-  it('offers the reactions', () => {
+  it('offers the reactions', async () => {
+    const user = userEvent.setup();
     render(<PlayScreen sessionId="session-1" />);
     push(sessionView());
+    await dismissRules(user);
 
     expect(screen.getByRole('button', { name: 'React with ❤️' })).toBeInTheDocument();
   });
@@ -275,9 +289,11 @@ describe('PlayScreen on the results screen', () => {
 });
 
 describe('PlayScreen inside a tournament', () => {
-  it('links to the series with the running score', () => {
+  it('links to the series with the running score', async () => {
+    const user = userEvent.setup();
     render(<PlayScreen sessionId="session-1" />);
     push(sessionView({ tournament: tournament({ yourTotalPoints: 3, partnerTotalPoints: 1 }) }));
+    await dismissRules(user);
 
     const link = screen.getByRole('link', { name: /Series/ });
     expect(link).toHaveAttribute('href', '/tournament/tour-1');
@@ -308,5 +324,89 @@ describe('PlayScreen when the partner is away', () => {
     );
 
     expect(screen.queryByRole('button', { name: "I'm ready ✨" })).not.toBeInTheDocument();
+  });
+});
+
+describe('PlayScreen shows the rules before the first match', () => {
+  it('opens on the rules rather than the lobby', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ gameSlug: 'memory', gameName: 'Memory' }));
+
+    expect(screen.getByRole('heading', { name: 'How to play' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: "I'm ready ✨" })).not.toBeInTheDocument();
+  });
+
+  it('still says which game this is', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ gameSlug: 'memory', gameName: 'Memory' }));
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeInTheDocument();
+  });
+
+  it('holds back the reactions and the player chips too', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ gameSlug: 'memory' }));
+
+    expect(screen.queryByRole('button', { name: 'React with ❤️' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Divs')).not.toBeInTheDocument();
+  });
+
+  it('reveals the lobby once they have read it', async () => {
+    const user = userEvent.setup();
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ gameSlug: 'memory' }));
+
+    await user.click(screen.getByRole('button', { name: 'Got it ✨' }));
+
+    expect(screen.queryByRole('heading', { name: 'How to play' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: "I'm ready ✨" })).toBeInTheDocument();
+  });
+
+  it('stays out of the way once dismissed, even as frames keep arriving', async () => {
+    const user = userEvent.setup();
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ gameSlug: 'memory' }));
+    await user.click(screen.getByRole('button', { name: 'Got it ✨' }));
+
+    push(sessionView({ gameSlug: 'memory', partner: player({ userId: 'them', ready: true }) }));
+
+    expect(screen.queryByRole('heading', { name: 'How to play' })).not.toBeInTheDocument();
+  });
+
+  it.each(['countdown', 'active', 'finished', 'abandoned'] as const)(
+    'is absent in the %s phase',
+    (phase) => {
+      render(<PlayScreen sessionId="session-1" />);
+      push(
+        sessionView({
+          gameSlug: 'memory',
+          phase,
+          startsAt: phase === 'countdown' ? Date.now() + 3_000 : null,
+          result: phase === 'finished' ? result() : null,
+        }),
+      );
+
+      expect(screen.queryByRole('heading', { name: 'How to play' })).not.toBeInTheDocument();
+    },
+  );
+
+  /**
+   * The whole reason there is no stored "seen" flag: a rematch counts down from `finished` and
+   * never passes back through `lobby`, so the phase alone already means "before the first match".
+   */
+  it('does not come back for a rematch', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ gameSlug: 'memory', phase: 'finished', result: result() }));
+    push(sessionView({ gameSlug: 'memory', phase: 'countdown', startsAt: Date.now() + 3_000 }));
+
+    expect(screen.queryByRole('heading', { name: 'How to play' })).not.toBeInTheDocument();
+  });
+
+  it('falls through to the lobby for a game with no module', () => {
+    render(<PlayScreen sessionId="session-1" />);
+    push(sessionView({ gameSlug: 'boat-escape', gameName: 'Boat Escape' }));
+
+    expect(screen.queryByRole('heading', { name: 'How to play' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: "I'm ready ✨" })).toBeInTheDocument();
   });
 });
