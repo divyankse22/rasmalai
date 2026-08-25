@@ -1,0 +1,8 @@
+// The CI/local-verification config: same as tsconfig.json but without the test-file exclusion, so
+// `npm run typecheck` still checks every *.test.ts(x) and src/test/** file's types. tsconfig.json
+// itself stays narrow because Next.js reads it directly for `next build`'s own type-check, and that
+// must never depend on vitest/@testing-library being installed (see tsconfig.json's comment).
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules"]
+}

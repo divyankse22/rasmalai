@@ -14,5 +14,11 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // Test files and test-only infrastructure (src/test/) depend on vitest/@testing-library, which
+  // are root-level devDependencies shared across the monorepo, not declared in this workspace's
+  // own package.json. `next build` reads this file directly to type-check the production build,
+  // and an environment that installs only this workspace's own deps (as Vercel's build did) won't
+  // have them, turning a missing-test-tooling problem into a broken production build. Full
+  // coverage of test files' types still happens via tsconfig.typecheck.json / `npm run typecheck`.
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.test.tsx", "src/test/**"]
 }
