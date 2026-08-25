@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { createSupabaseTokenVerifier } from './auth/tokenVerifier';
 import { loadEnv } from './config/env';
 import { closePool, getPool } from './db/pool';
+import { runMigrations } from './db/migrate';
 import { createApp } from './http/app';
 import { logger } from './logger';
 import { createDashboardRepository } from './modules/dashboard/dashboardRepository';
@@ -23,6 +24,25 @@ import { SocketRegistry } from './ws/socketRegistry';
 const env = loadEnv();
 const verifier = createSupabaseTokenVerifier(env.NEXT_PUBLIC_SUPABASE_URL);
 const pool = getPool(env.DATABASE_URL);
+
+/**
+ * Applied before anything else touches the database, so a fresh database (or one with a migration
+ * nobody remembered to run by hand) fails loudly once at boot instead of every route that touches
+ * Postgres failing individually the moment traffic arrives. `runMigrations` is transactional per
+ * file and a no-op when nothing is pending, which is the common case on every boot after this one.
+ *
+ * A top-level `await` on the server's own entrypoint: everything below this — the sweepers, the
+ * orphaned-match cleanup, `server.listen()` itself — only runs once this has resolved, because
+ * module evaluation is sequential. On failure this exits rather than falling through to
+ * `unhandledRejection`, so the failure is loud and structured rather than a bare stack trace.
+ */
+try {
+  const applied = await runMigrations(pool);
+  if (applied.length > 0) logger.info({ count: applied.length }, 'migrations applied at boot');
+} catch (error) {
+  logger.error({ err: error }, 'migrations failed at boot');
+  process.exit(1);
+}
 
 // The registry is built first because the HTTP layer needs to reach sockets, and the app has to
 // exist before the server those sockets attach to.
