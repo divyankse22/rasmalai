@@ -31,6 +31,8 @@ function tinyRules(overrides: Partial<AnyGameRules> = {}): AnyGameRules {
       players: 2,
       orientation: 'any',
       inputs: ['tap'],
+      // Required on every game, so a stand-in rulebook needs one too. The runner never reads it.
+      howToPlay: { tagline: 'A tiny game.', steps: ['Tap.', 'Tap again.', 'Stop.'] },
     },
     reconnectPolicy: { windowMs: 120_000, pauseOnDisconnect: true, onExpire: 'forfeit' },
 

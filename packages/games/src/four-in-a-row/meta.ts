@@ -22,6 +22,15 @@ export const meta: GameMeta = {
   // Seven across by six up is close enough to square to be happy either way up.
   orientation: 'any',
   inputs: ['tap', 'keyboard', 'pointer'],
+  howToPlay: {
+    tagline: 'Line up four of your discs — across, upwards or diagonally.',
+    steps: [
+      'Tap a column and your disc drops to the bottom of it.',
+      'You take turns. Who goes first is a coin flip, every board.',
+      'Four in a row in any direction wins it.',
+      'A full board with nobody at four is a draw.',
+    ],
+  },
   // One board is one match, so a score here is 1 or 0 and a lifetime best of "1" says only that you
   // have won at least once. Nothing worth a line on the card.
   formatScore: () => null,

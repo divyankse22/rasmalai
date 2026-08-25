@@ -32,6 +32,24 @@ export function opponentOf(player: PlayerIndex): PlayerIndex {
   return player === 0 ? 1 : 0;
 }
 
+/**
+ * How this game explains itself to somebody about to play it for the first time.
+ *
+ * Describes the game and nothing else: no move clock, no reconnect window, no forfeit rule. Those
+ * belong to the platform, apply to several games at once, and would be nine copies to keep in step.
+ *
+ * One page, shared by both seats, and therefore never carrying anything one seat is not allowed to
+ * know. Bomb Defusal is why that is a rule rather than a habit: its manual reaches one of the two
+ * screens on purpose, and a "here are the rules" page that printed it would leave the product with
+ * no cooperative game in it. `howToPlay.test.ts` holds it to that.
+ */
+export interface HowToPlay {
+  /** One line: what this game is, and how it is won. Read before the steps, and often instead. */
+  tagline: string;
+  /** Three to six steps, in order. A rule is allowed to be a step. */
+  steps: readonly string[];
+}
+
 export interface GameMeta {
   slug: string;
   name: string;
@@ -46,6 +64,14 @@ export interface GameMeta {
   players: 2;
   orientation: 'any' | 'portrait' | 'landscape';
   inputs: readonly ('tap' | 'swipe' | 'keyboard' | 'pointer')[];
+  /**
+   * Shown once, full screen, before the first match of a session — and never on a rematch, which
+   * needs no flag anywhere because a rematch counts down from the results screen rather than
+   * returning to the lobby.
+   *
+   * Required, unlike `formatScore`: a game that cannot explain itself should not ship.
+   */
+  howToPlay: HowToPlay;
   /**
    * How one of this game's scores reads on its own — `"4 rounds"`, `"18.4s"`, `"9 pairs"` — or
    * null when a bare number means nothing worth showing.

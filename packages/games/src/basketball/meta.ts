@@ -1,4 +1,5 @@
 import type { GameMeta } from '../contract';
+import { ROUNDS_PER_LEVEL, SHOT_CLOCK_MS, TOTAL_SHOTS } from './protocol';
 
 /**
  * Basketball — the third game, and the first one drawn with Phaser.
@@ -29,4 +30,14 @@ export const meta: GameMeta = {
   // Drag and release, with mouse and thumb doing the identical thing; arrows and space for anyone
   // who would rather not drag at all (`docs/05`, input abstraction).
   inputs: ['tap', 'swipe', 'keyboard', 'pointer'],
+  howToPlay: {
+    tagline: `${TOTAL_SHOTS} shots at a hoop that will not stay still.`,
+    steps: [
+      'Drag back and let go to shoot. Arrows and space do the same job.',
+      'You alternate, one shot each per round, at the identical hoop.',
+      `The first ${ROUNDS_PER_LEVEL} rounds the hoop stands still. After that it drifts, and keeps getting worse.`,
+      `${SHOT_CLOCK_MS / 1000} seconds a shot, and shooting from further out is worth more.`,
+      `Most points after ${TOTAL_SHOTS} shots wins. Best with the phone turned sideways.`,
+    ],
+  },
 };

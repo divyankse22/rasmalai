@@ -1,4 +1,5 @@
 import type { GameMeta } from '../contract';
+import { LANES } from './protocol';
 
 /**
  * Reflex — the sixth game, and the first one drawn with Phaser.
@@ -29,6 +30,17 @@ export const meta: GameMeta = {
   orientation: 'landscape',
   // Tap a side, swipe across, or use the arrow keys — a moving game should not insist on one hand.
   inputs: ['tap', 'swipe', 'keyboard', 'pointer'],
+  howToPlay: {
+    tagline:
+      'Stay alive longest. The same hazards are coming for both of you, at the same moments.',
+    steps: [
+      `You are in one of ${LANES} lanes. Tap a side, swipe, or use the arrow keys to step across.`,
+      'One lane per step, with a beat in between — you cannot jump across the board.',
+      'Lanes light up just before a hazard lands on them. Be somewhere else.',
+      'It speeds up, and more lanes close as it goes. One is always left open.',
+      'Whoever survives longer wins. Best with the phone turned sideways.',
+    ],
+  },
   // Milliseconds survived. Exactly the case that made the platform stop guessing at score units:
   // "best 28640" is a worse thing to print on a card than no card at all.
   formatScore: (score) => `${(score / 1000).toFixed(1)}s`,

@@ -1,4 +1,5 @@
 import type { GameMeta } from '../contract';
+import { ASKS_EACH, CANDIDATES, ROUNDS } from './protocol';
 
 /**
  * Would You Rather — the eighth game, and the first one where a player *chooses the question*.
@@ -30,6 +31,16 @@ export const meta: GameMeta = {
   // Long prompts stacked in a column, which is the tall way round on every device.
   orientation: 'any',
   inputs: ['tap', 'keyboard', 'pointer'],
+  howToPlay: {
+    tagline: 'Pick the impossible question — then bet on how they will answer it.',
+    steps: [
+      `On your turn to ask you are dealt ${CANDIDATES} dilemmas, and you choose which one to inflict.`,
+      'They see only the one you picked, and take a side.',
+      'Then you call it: which side did they take?',
+      `${ROUNDS} rounds, ${ASKS_EACH} each. Calling it right is the whole game.`,
+      'The dilemmas get harder as the match goes on.',
+    ],
+  },
   // Out of three: you ask three of the six rounds, and each is one prediction.
   formatScore: (score) => `${score} of 3 read right`,
 };

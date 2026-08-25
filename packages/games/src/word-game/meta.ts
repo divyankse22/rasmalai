@@ -1,4 +1,13 @@
 import type { GameMeta } from '../contract';
+import {
+  HINTS_EACH,
+  HINT_COST,
+  MIN_WORD,
+  RAID_LETTERS,
+  RAID_LETTERS_BEHIND,
+  TURN_BONUS_MS,
+  TURN_START_MS,
+} from './protocol';
 
 /**
  * Word Game — the ninth game, and the first one that needs a dictionary.
@@ -27,6 +36,18 @@ export const meta: GameMeta = {
   // A tile rack above a word being built: taller than it is wide, on every device.
   orientation: 'any',
   inputs: ['tap', 'keyboard', 'pointer'],
+  howToPlay: {
+    tagline:
+      'Build words from the letters on the table. Long words are worth far more than they look.',
+    steps: [
+      `Tap letters from the pool to build a word, ${MIN_WORD} letters or more.`,
+      'A word scores its length squared — one six-letter word beats four three-letter ones.',
+      'There is always one golden tile on the table, and a word using it is worth double.',
+      `${RAID_LETTERS} letters also breaks one of their words and pays a bonus; ${RAID_LETTERS_BEHIND} is enough while you are behind.`,
+      `${TURN_START_MS / 1000} seconds a turn, plus ${TURN_BONUS_MS / 1000} more for every word you have already made.`,
+      `Stuck? Pass to top the table up, or spend a hint — ${HINTS_EACH} each, ${HINT_COST} points apiece.`,
+    ],
+  },
   // Points, not word counts — the scoreline is what the length-squared arithmetic produced.
   formatScore: (score) => `${score} point${score === 1 ? '' : 's'}`,
 };
