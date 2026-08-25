@@ -219,7 +219,7 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
    * fight the input's own cursor placement and text selection, and `type="date"` has its own native
    * touch handling a custom drag would only get in the way of.
    */
-  const dragState = useRef<{ startX: number; dragged: boolean } | null>(null);
+  const dragState = useRef<{ pointerId: number; startX: number; dragged: boolean } | null>(null);
   const suppressClick = useRef(false);
   const [dragPx, setDragPx] = useState(0);
 
@@ -231,16 +231,21 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
     setDragPx(0);
   }
 
+  /** Ignores every pointer but the one that started the drag, so a second finger cannot hijack it. */
+  function owned(event: PointerEvent): boolean {
+    return dragState.current !== null && dragState.current.pointerId === event.pointerId;
+  }
+
   function onPointerMove(event: PointerEvent) {
-    if (!dragState.current) return;
-    const deltaX = event.clientX - dragState.current.startX;
-    if (Math.abs(deltaX) > 8) dragState.current.dragged = true;
+    if (!owned(event)) return;
+    const deltaX = event.clientX - dragState.current!.startX;
+    if (Math.abs(deltaX) > 8) dragState.current!.dragged = true;
     setDragPx(deltaX);
   }
 
   function onPointerUp(event: PointerEvent) {
-    if (!dragState.current) return;
-    const { startX, dragged } = dragState.current;
+    if (!owned(event)) return;
+    const { startX, dragged } = dragState.current!;
     const deltaX = event.clientX - startX;
     const width = trackRef.current?.clientWidth || 0;
     cleanupDrag();
@@ -256,17 +261,35 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
     }
   }
 
-  function onPointerCancel() {
+  function onPointerCancel(event: PointerEvent) {
+    if (!owned(event)) return;
     cleanupDrag();
   }
 
   function onTrackPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('input, textarea, select')) return;
-    dragState.current = { startX: event.clientX, dragged: false };
+    dragState.current = { pointerId: event.pointerId, startX: event.clientX, dragged: false };
+    /*
+     * Own the pointer for the rest of the gesture. Without this the drag can simply never be told
+     * it ended: a mouse gets no implicit pointer capture, so a button released past the window
+     * edge, over the toolbar, or over the native picker `type="date"` opens on the "when did you
+     * two meet?" card delivers no `pointerup` and no `pointercancel` to the page at all. The drag
+     * would keep the offset it had reached and leave the card frozen part-way between two
+     * questions, at whatever arbitrary point the pointer got to, until a reload. Capture makes the
+     * browser deliver the end of the gesture here wherever it happens; `lostpointercapture` is the
+     * backstop for the cases where it is taken away from us instead.
+     */
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
+  }
+
+  /** Capture gone with no `pointerup` to go with it — the gesture is over whether we like it or not. */
+  function onTrackLostPointerCapture(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragState.current?.pointerId !== event.pointerId) return;
+    cleanupDrag();
   }
 
   /** Eats the one click a real drag leaves behind, wherever it happens to land. */
@@ -290,6 +313,7 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
           className="flex touch-pan-y transition-transform duration-soft ease-bounce"
           style={{ transform: `translateX(calc(-${position * 100}% + ${dragPx}px))` }}
           onPointerDown={onTrackPointerDown}
+          onLostPointerCapture={onTrackLostPointerCapture}
           onClickCapture={onTrackClickCapture}
         >
           {steps.map((candidate, i) => (

@@ -140,4 +140,41 @@ describe('OnboardingWizard swiping', () => {
     // A stray click on "Not yet — I'm first" would select hasCode and auto-advance past this card.
     expect(heading()).toHaveTextContent('Do you have their code?');
   });
+
+  /*
+   * A gesture the page never sees the end of. A mouse gets no implicit pointer capture, so
+   * releasing the button anywhere outside the page — past the window edge, over the toolbar, over
+   * the native date picker the "when did you two meet?" card opens — delivers neither `pointerup`
+   * nor `pointercancel`. Without capture the drag never learns it is over, and the card is left
+   * frozen part-way between two questions at whatever offset the pointer reached.
+   */
+  it('takes pointer capture so the gesture cannot be lost mid-drag', async () => {
+    // jsdom implements no pointer capture at all, so the call itself is what we can observe.
+    const capture = vi.fn();
+    (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture = capture;
+
+    const { container } = render(<OnboardingWizard suggestedName="" />);
+    fireEvent.pointerDown(track(container), { pointerId: 7, clientX: 200 });
+
+    expect(capture).toHaveBeenCalledWith(7);
+    delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
+  });
+
+  it('unwedges the card if the gesture is lost anyway', async () => {
+    const { container } = render(<OnboardingWizard suggestedName="" />);
+    const el = track(container);
+
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: 200 });
+    await act(async () => {
+      fireEvent.pointerMove(window, { pointerId: 1, clientX: 60 });
+    });
+    expect(el.style.transform).toContain('-140px');
+
+    // Capture lost with no pointerup and no pointercancel: the only signal the drag will ever get.
+    await act(async () => {
+      fireEvent.lostPointerCapture(el, { pointerId: 1 });
+    });
+
+    expect(el.style.transform).toBe('translateX(calc(-0% + 0px))');
+  });
 });
