@@ -44,7 +44,7 @@ export const meta: GameMeta = {
       'A word scores its length squared — one six-letter word beats four three-letter ones.',
       'There is always one golden tile on the table, and a word using it is worth double.',
       `${RAID_LETTERS} letters also breaks one of their words and pays a bonus; ${RAID_LETTERS_BEHIND} is enough while you are behind.`,
-      `${TURN_START_MS / 1000} seconds a turn, plus ${TURN_BONUS_MS / 1000} more for every word you have already made.`,
+      `${TURN_START_MS / 1000} seconds a turn, plus ${TURN_BONUS_MS / 1000} more seconds for every word you have made.`,
       `Stuck? Pass to top the table up, or spend a hint — ${HINTS_EACH} each, ${HINT_COST} points apiece.`,
     ],
   },

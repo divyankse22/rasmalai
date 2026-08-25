@@ -21,12 +21,12 @@ export const meta: GameMeta = {
   inputs: ['tap', 'keyboard', 'pointer'],
   howToPlay: {
     tagline:
-      'Five rounds. Tap the moment the screen tells you to — the quicker thumb takes the round.',
+      `${ROUNDS} rounds. Tap the moment the screen tells you to — the quicker thumb takes the round.`,
     steps: [
       'The screen holds on Wait… for a stretch you cannot predict.',
       'The instant it turns and says TAP!, tap it. Space or Enter works too.',
       'Whoever is quicker takes the round. Tapping early loses it outright.',
-      `${ROUNDS} rounds, every one of them played. Most rounds wins.`,
+      'Every round is played — there is no early finish. Most rounds wins.',
     ],
   },
   // The score is rounds won out of five, not a reaction time — the fastest thumb is the lowest

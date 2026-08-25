@@ -29,13 +29,12 @@ export const meta: GameMeta = {
   orientation: 'any',
   inputs: ['tap', 'keyboard', 'pointer'],
   howToPlay: {
-    tagline:
-      'Six questions about the two of you. Nobody wins this one — it just tells you something.',
+    tagline: `${ROUNDS} questions about the two of you. Nobody wins this one — it just tells you something.`,
     steps: [
       'Each round, one of you answers about yourself while the other guesses that answer.',
       'You both choose at the same time, in secret. Neither of you sees the other’s screen.',
       'The round opens only when you are both in, so you find out together.',
-      `${ROUNDS} rounds, three each way, ${OPTIONS} options every time.`,
+      `${ROUNDS} rounds, ${ROUNDS / 2} each way, ${OPTIONS} options every time.`,
     ],
   },
   // Out of three: each of you answers three questions and guesses three.
