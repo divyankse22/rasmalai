@@ -15,11 +15,14 @@ import { logger } from '../logger';
 export const MIGRATIONS_DIR = resolve(process.cwd(), '../../supabase/migrations');
 
 async function ensureMigrationsTable(pool: Pool): Promise<void> {
+  // RLS, deny-all, no policy — the same backstop every table in supabase/migrations/ gets, so the
+  // public Supabase key can never read or write migration bookkeeping directly via the REST API.
   await pool.query(`
     create table if not exists public.schema_migrations (
       name text primary key,
       applied_at timestamptz not null default now()
-    )
+    );
+    alter table public.schema_migrations enable row level security;
   `);
 }
 
