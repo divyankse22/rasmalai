@@ -1,0 +1,33 @@
+@import 'tailwindcss';
+@import '../design-system/theme.css';
+
+/*
+ * Game renderers live in a workspace package, and Tailwind does not look inside node_modules — a
+ * symlinked workspace included. Without this, a class the games use and the web app happens not to
+ * would silently never be generated: the game renders, mostly correctly, with a few rules missing.
+ * That is a far worse failure than a build error, so the source has to be declared here.
+ */
+@source "../../../../packages/games/src";
+
+html {
+  /* Games rely on deliberate gestures; stop the browser hijacking a fast double-tap as zoom. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  min-height: 100dvh;
+}
+
+/* Respect the platform accessibility setting rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

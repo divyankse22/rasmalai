@@ -1,0 +1,49 @@
+# Terms excluded from the Word Game dictionary.
+#
+# This file exists ONLY to be subtracted. Nothing here is ever a valid word in the game.
+#
+# SCOWL size 50 is mainstream English and contains slurs, because a spell checker has to know
+# them. A game does not. Mild profanity is deliberately NOT listed — `damn`, `hell` and `crap`
+# stay in, because this is a private game between two adults and refusing them would be prissy
+# rather than safe. What is removed is the category that could land badly on somebody's screen
+# with no warning and no way to take it back.
+#
+# Lines beginning with # are comments. Matching is exact and case-insensitive.
+# Re-run `scripts/dictionary/build-dictionary.sh` after editing.
+nigger
+niggers
+nigga
+niggas
+faggot
+faggots
+kike
+kikes
+spic
+spics
+chink
+chinks
+wetback
+wetbacks
+tranny
+trannies
+retard
+retards
+retarded
+gook
+gooks
+dago
+dagos
+paki
+pakis
+coon
+coons
+darkie
+darkies
+gyp
+gypped
+jap
+japs
+squaw
+squaws
+wop
+wops

@@ -1,0 +1,21 @@
+-- Rasmalai 0009 — Basketball becomes invitable, and a tournament becomes possible.
+--
+-- The whole of slice 10a's database footprint is this one line, for the second time running. The
+-- catalogue row has existed since 0004 with `enabled = false`, because `public.games.enabled` means
+-- "somebody wrote this game" rather than "this couple has earned it" — everything is unlocked in V1.
+-- Now that `packages/games/src/basketball` exists, the row can stop lying.
+--
+-- `category` and `scoring_kind` were already 'competitive' in the seed and are untouched: a made
+-- basket is worth points against the person sitting opposite, so it feeds wins, streaks and 3/1/0
+-- tournament scoring with no reclassification needed.
+--
+-- What actually changes for the couple is larger than one flag. D-1 sets the minimum tournament at
+-- three games, and until this row flipped there were two — so the create screen could be opened and
+-- never completed. This is the third module, and the entire tournament feature shipped in slice 9
+-- becomes reachable with it.
+--
+-- Three games, no new table, no new column, no new index. The first game needed the whole platform;
+-- the second needed nothing; the third needed nothing either, and this one is drawn with a
+-- completely different renderer.
+
+update public.games set enabled = true where slug = 'basketball';

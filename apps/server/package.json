@@ -1,0 +1,38 @@
+{
+  "name": "@rasmalai/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Rasmalai authoritative backend: HTTP API and WebSocket game orchestration",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@rasmalai/games": "*",
+    "@rasmalai/shared": "*",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^5.1.0",
+    "jose": "^6.2.8",
+    "pg": "^8.23.0",
+    "pino": "^9.0.0",
+    "ws": "^8.21.3",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.21.0",
+    "@types/ws": "^8.18.1",
+    "pino-pretty": "^13.0.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
