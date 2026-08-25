@@ -115,7 +115,7 @@ function CategorySwipe({ category, games }: { category: GameCategory; games: Cat
 
   const [dragPx, setDragPx] = useState(0);
   const trackRef = useRef<HTMLUListElement>(null);
-  const drag = useRef<{ startX: number; dragged: boolean } | null>(null);
+  const drag = useRef<{ pointerId: number; startX: number; dragged: boolean } | null>(null);
   const suppressClick = useRef(false);
 
   const clamp = (i: number) => Math.min(Math.max(i, 0), last);
@@ -128,16 +128,21 @@ function CategorySwipe({ category, games }: { category: GameCategory; games: Cat
     setDragPx(0);
   }
 
+  /** Ignores every pointer but the one that started the drag, so a second finger cannot hijack it. */
+  function owned(event: PointerEvent): boolean {
+    return drag.current !== null && drag.current.pointerId === event.pointerId;
+  }
+
   function onPointerMove(event: PointerEvent) {
-    if (!drag.current) return;
-    const deltaX = event.clientX - drag.current.startX;
-    if (Math.abs(deltaX) > 8) drag.current.dragged = true;
+    if (!owned(event)) return;
+    const deltaX = event.clientX - drag.current!.startX;
+    if (Math.abs(deltaX) > 8) drag.current!.dragged = true;
     setDragPx(deltaX);
   }
 
   function onPointerUp(event: PointerEvent) {
-    if (!drag.current) return;
-    const { startX, dragged } = drag.current;
+    if (!owned(event)) return;
+    const { startX, dragged } = drag.current!;
     const deltaX = event.clientX - startX;
     cleanupDrag();
     if (!dragged) return;
@@ -149,16 +154,30 @@ function CategorySwipe({ category, games }: { category: GameCategory; games: Cat
     else if (deltaX >= threshold) setIndex(clamp(position - 1));
   }
 
-  function onPointerCancel() {
+  function onPointerCancel(event: PointerEvent) {
+    if (!owned(event)) return;
     cleanupDrag();
   }
 
   function onPointerDown(event: ReactPointerEvent<HTMLUListElement>) {
     if (ordered.length < 2 || event.button !== 0) return;
-    drag.current = { startX: event.clientX, dragged: false };
+    drag.current = { pointerId: event.pointerId, startX: event.clientX, dragged: false };
+    /*
+     * Own the pointer for the rest of the gesture. A mouse gets no implicit pointer capture, so a
+     * button released past the window edge or over the toolbar delivers neither `pointerup` nor
+     * `pointercancel` here, and the drag would never learn it ended — leaving the row frozen
+     * part-way between two games at whatever offset the pointer reached, until a reload.
+     */
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
+  }
+
+  /** Capture gone with no `pointerup` to go with it — the gesture is over whether we like it or not. */
+  function onLostPointerCapture(event: ReactPointerEvent<HTMLUListElement>) {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    cleanupDrag();
   }
 
   /** Eats the one click a real drag leaves behind, wherever it happens to land. */
@@ -183,6 +202,7 @@ function CategorySwipe({ category, games }: { category: GameCategory; games: Cat
           className="flex touch-pan-y transition-transform duration-soft ease-bounce"
           style={{ transform: `translateX(calc(${-position * 100}% + ${dragPx}px))` }}
           onPointerDown={onPointerDown}
+          onLostPointerCapture={onLostPointerCapture}
           onClickCapture={onClickCapture}
         >
           {ordered.map((entry, i) => (
