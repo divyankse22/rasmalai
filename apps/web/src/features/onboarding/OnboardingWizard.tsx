@@ -1,7 +1,14 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { PAIRING_CODE_LENGTH, type AvatarKey, type Gender } from '@rasmalai/shared';
 import { Button } from '@/design-system/Button';
 import { Card } from '@/design-system/Card';
@@ -199,6 +206,77 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
     else advance();
   }
 
+  /*
+   * Swiping the track: forward goes through the exact same `advance`/`submit` the Next/All done
+   * button already calls — a swipe past an unanswered required field is refused exactly the way a
+   * button tap is, and a swipe on the last card submits rather than silently doing nothing. Back
+   * goes through the same `back`. This is the same drag technique as the game catalogue's
+   * CategorySwipe (dead zone before treating a gesture as a real drag, suppress the trailing click
+   * once it is one) — here that matters more, since a card can hold buttons or a text input rather
+   * than just an invite button.
+   *
+   * Starting a drag inside a text/date/number input is left alone entirely: a swipe gesture would
+   * fight the input's own cursor placement and text selection, and `type="date"` has its own native
+   * touch handling a custom drag would only get in the way of.
+   */
+  const dragState = useRef<{ startX: number; dragged: boolean } | null>(null);
+  const suppressClick = useRef(false);
+  const [dragPx, setDragPx] = useState(0);
+
+  function cleanupDrag() {
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', onPointerUp);
+    window.removeEventListener('pointercancel', onPointerCancel);
+    dragState.current = null;
+    setDragPx(0);
+  }
+
+  function onPointerMove(event: PointerEvent) {
+    if (!dragState.current) return;
+    const deltaX = event.clientX - dragState.current.startX;
+    if (Math.abs(deltaX) > 8) dragState.current.dragged = true;
+    setDragPx(deltaX);
+  }
+
+  function onPointerUp(event: PointerEvent) {
+    if (!dragState.current) return;
+    const { startX, dragged } = dragState.current;
+    const deltaX = event.clientX - startX;
+    const width = trackRef.current?.clientWidth || 0;
+    cleanupDrag();
+    if (!dragged) return;
+
+    suppressClick.current = true;
+    const threshold = Math.max(width * 0.2, 40);
+    if (deltaX <= -threshold) {
+      if (isLast) void submit();
+      else advance();
+    } else if (deltaX >= threshold && position > 0) {
+      back();
+    }
+  }
+
+  function onPointerCancel() {
+    cleanupDrag();
+  }
+
+  function onTrackPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('input, textarea, select')) return;
+    dragState.current = { startX: event.clientX, dragged: false };
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
+  }
+
+  /** Eats the one click a real drag leaves behind, wherever it happens to land. */
+  function onTrackClickCapture(event: ReactMouseEvent) {
+    if (!suppressClick.current) return;
+    suppressClick.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
   const liveError = showError
     ? (serverErrors[step.id] ?? step.validate(answers) ?? codeProblem(check))
     : serverErrors[step.id];
@@ -209,8 +287,10 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
       <div className="-mx-4 overflow-hidden px-4 py-2">
         <div
           ref={trackRef}
-          className="flex transition-transform duration-soft ease-bounce"
-          style={{ transform: `translateX(-${position * 100}%)` }}
+          className="flex touch-pan-y transition-transform duration-soft ease-bounce"
+          style={{ transform: `translateX(calc(-${position * 100}% + ${dragPx}px))` }}
+          onPointerDown={onTrackPointerDown}
+          onClickCapture={onTrackClickCapture}
         >
           {steps.map((candidate, i) => (
             <div
