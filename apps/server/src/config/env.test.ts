@@ -28,6 +28,21 @@ describe('loadEnv', () => {
     expect(() => loadEnv({})).toThrow(/NEXT_PUBLIC_SUPABASE_URL/);
   });
 
+  /*
+   * The production incident this guards: APP_ORIGIN was set to the Vercel URL copied out of the
+   * address bar, trailing slash included. `cors` echoed it back verbatim, the browser compared it
+   * to its own slash-free `Origin` and failed every request, and the app showed "could not reach
+   * Rasmalai" as though the backend were down.
+   */
+  it('normalises APP_ORIGIN to a bare origin the browser will match', () => {
+    expect(
+      loadEnv({ ...MINIMAL, APP_ORIGIN: 'https://rasmalai-sandy.vercel.app/' }).APP_ORIGIN,
+    ).toBe('https://rasmalai-sandy.vercel.app');
+    expect(loadEnv({ ...MINIMAL, APP_ORIGIN: 'https://example.com/app/' }).APP_ORIGIN).toBe(
+      'https://example.com',
+    );
+  });
+
   it('names the offending variable when configuration is invalid', () => {
     expect(() => loadEnv({ ...MINIMAL, APP_ORIGIN: 'not-a-url' })).toThrow(/APP_ORIGIN/);
     expect(() => loadEnv({ ...MINIMAL, PORT: '-1' })).toThrow(/PORT/);

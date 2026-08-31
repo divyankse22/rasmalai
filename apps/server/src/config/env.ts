@@ -14,7 +14,21 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(4000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('debug'),
-  APP_ORIGIN: z.string().url().default('http://localhost:3000'),
+  /*
+   * Normalised to a bare origin, because this value is compared by the browser character for
+   * character. `cors` echoes whatever string it is given straight back as
+   * `Access-Control-Allow-Origin`, and a browser's `Origin` header is a *serialised origin* — it
+   * never carries a trailing slash. So an `APP_ORIGIN` copied out of the address bar as
+   * "https://rasmalai-sandy.vercel.app/" makes every browser call fail the CORS check while the
+   * server happily answers 204, which surfaces to the user as "could not reach Rasmalai" and looks
+   * for all the world like the backend is down. `URL.origin` drops the trailing slash and any
+   * stray path, so the value cannot be pasted wrong.
+   */
+  APP_ORIGIN: z
+    .string()
+    .url()
+    .default('http://localhost:3000')
+    .transform((value) => new URL(value).origin),
 
   // Deliberately the NEXT_PUBLIC_ variable rather than a duplicate: it is the same project URL,
   // it is public by nature, and one value in one place cannot drift out of sync with itself.
