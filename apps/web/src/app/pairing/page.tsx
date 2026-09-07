@@ -19,7 +19,7 @@ export default async function PairingPage() {
   if (state?.couple) redirect('/dashboard');
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-6 px-6 py-10">
+    <main className="mx-auto flex min-h-dvh w-full max-w-app flex-col gap-6 px-6 py-10">
       <header className="flex flex-col gap-1 text-center">
         <h1 className="font-display text-3xl font-bold text-blueberry-deep">Find each other</h1>
         <p className="text-muted">One code, one accept, and you are paired for good.</p>

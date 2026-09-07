@@ -1,0 +1,572 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-06T20:57:47.056Z",
+  "title": "Design System: Rasmalai",
+  "extensions": {
+    "colorMeta": {
+      "cream": {
+        "role": "neutral",
+        "displayName": "Counter Cream",
+        "canonical": "#fff8f2",
+        "purpose": "The page ground, and the fill of any surface nested inside a card.",
+        "tonalRamp": [
+          "#0e0a07",
+          "#2a2522",
+          "#494440",
+          "#6b6560",
+          "#8e8883",
+          "#b3ada7",
+          "#d9d3ce",
+          "#f3ede8"
+        ]
+      },
+      "shell": {
+        "role": "neutral",
+        "displayName": "Shell",
+        "canonical": "#fffdfb",
+        "purpose": "The card plane. A half-step lighter than cream.",
+        "tonalRamp": [
+          "#0c0b0a",
+          "#272625",
+          "#464543",
+          "#676664",
+          "#8a8987",
+          "#afadac",
+          "#d5d4d2",
+          "#f0eeec"
+        ]
+      },
+      "blush": {
+        "role": "tertiary",
+        "displayName": "Icing Blush",
+        "canonical": "#ffd6e0",
+        "purpose": "Pressed tint on drawer rows and icon buttons; marks the active nav section.",
+        "tonalRamp": [
+          "#18040a",
+          "#371d25",
+          "#593b43",
+          "#7d5b64",
+          "#a27e87",
+          "#c7a3ac",
+          "#eec9d2",
+          "#ffe4ec"
+        ]
+      },
+      "berry": {
+        "role": "primary",
+        "displayName": "Rasmalai Pink",
+        "canonical": "#c93a64",
+        "purpose": "Fill under light button text, text on cream, and the focus ring — it must clear the bar in all three roles (4.84 / 4.67 / 4.67).",
+        "tonalRamp": [
+          "#330002",
+          "#5c0018",
+          "#860035",
+          "#b22854",
+          "#dd4f75",
+          "#ff7a9a",
+          "#ffa3c1",
+          "#ffbfdb"
+        ]
+      },
+      "berry-deep": {
+        "role": "primary",
+        "displayName": "Syrup Deep",
+        "canonical": "#a82a4b",
+        "purpose": "Pressed state of a primary action, carrying Shell text at 6.68:1. Never a resting fill.",
+        "tonalRamp": [
+          "#300001",
+          "#580015",
+          "#810832",
+          "#ac3351",
+          "#d75872",
+          "#fe8197",
+          "#ffaabd",
+          "#ffc5d8"
+        ]
+      },
+      "mint": {
+        "role": "tertiary",
+        "displayName": "Pistachio Mint",
+        "canonical": "#c8f0e0",
+        "purpose": "Counter colour held for game surfaces and future accents.",
+        "tonalRamp": [
+          "#001008",
+          "#0e2d23",
+          "#2c4d41",
+          "#4c6f62",
+          "#6e9384",
+          "#93b7a9",
+          "#badecf",
+          "#d5f8ea"
+        ]
+      },
+      "sky": {
+        "role": "secondary",
+        "displayName": "Morning Sky",
+        "canonical": "#cfe6ff",
+        "purpose": "Resting fill of a soft button; active tint on a ghost button.",
+        "tonalRamp": [
+          "#020c19",
+          "#182838",
+          "#354759",
+          "#55687d",
+          "#778ca2",
+          "#9cb0c7",
+          "#c2d7ed",
+          "#ddf1ff"
+        ]
+      },
+      "sky-deep": {
+        "role": "secondary",
+        "displayName": "Overcast Sky",
+        "canonical": "#a5d0f7",
+        "purpose": "Pressed state of a soft button. One step darker at the same hue — ~21% less luminance, ink still at 8.1:1.",
+        "tonalRamp": [
+          "#000b22",
+          "#052843",
+          "#254866",
+          "#446a8b",
+          "#658eb2",
+          "#8bb3d7",
+          "#b2d9fd",
+          "#cdf4ff"
+        ]
+      },
+      "blueberry": {
+        "role": "secondary",
+        "displayName": "Blueberry",
+        "canonical": "#3a88ee",
+        "purpose": "The lighter blue. Too pale against cream for text.",
+        "tonalRamp": [
+          "#000046",
+          "#001b6d",
+          "#003f97",
+          "#1263c2",
+          "#3b88ed",
+          "#65afff",
+          "#8fd7ff",
+          "#abf2ff"
+        ]
+      },
+      "blueberry-deep": {
+        "role": "secondary",
+        "displayName": "Cardamom Blue",
+        "canonical": "#2b70ca",
+        "purpose": "The \"Ras\" half of the wordmark; pressed state of a soft button. ~4.7:1 on cream.",
+        "tonalRamp": [
+          "#000040",
+          "#001e67",
+          "#004190",
+          "#2164ba",
+          "#4589e4",
+          "#6eafff",
+          "#96d7ff",
+          "#b2f2ff"
+        ]
+      },
+      "butter": {
+        "role": "tertiary",
+        "displayName": "Sponge Butter",
+        "canonical": "#ffeec2",
+        "purpose": "Almost exclusively the \"soon\" chip on an unbuilt game.",
+        "tonalRamp": [
+          "#130900",
+          "#312502",
+          "#514420",
+          "#73653e",
+          "#978860",
+          "#bcad85",
+          "#e2d3ac",
+          "#fceec7"
+        ]
+      },
+      "lilac": {
+        "role": "tertiary",
+        "displayName": "Lilac",
+        "canonical": "#e5dbff",
+        "purpose": "Counter colour held for game surfaces and future accents.",
+        "tonalRamp": [
+          "#0e071a",
+          "#292239",
+          "#48405b",
+          "#69607e",
+          "#8c83a4",
+          "#b1a8c9",
+          "#d7ceef",
+          "#f2e9ff"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Plum Ink",
+        "canonical": "#3d2b3a",
+        "purpose": "All body and heading text. Warm, never black. Also the drawer scrim at 30%.",
+        "tonalRamp": [
+          "#130611",
+          "#30212d",
+          "#503f4d",
+          "#735f6f",
+          "#978193",
+          "#bca6b8",
+          "#e2cdde",
+          "#fce7f8"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Plum",
+        "canonical": "#7e6b78",
+        "purpose": "Secondary text: stat labels, blurbs, captions, ghost button text. 4.68:1 on cream.",
+        "tonalRamp": [
+          "#12070f",
+          "#2f212b",
+          "#4f3f4a",
+          "#72606c",
+          "#968290",
+          "#bba7b4",
+          "#e1cedb",
+          "#fbe8f5"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#f1e3ea",
+        "purpose": "Every border in the product, and the \"checking\" presence dot.",
+        "tonalRamp": [
+          "#10090c",
+          "#2c2328",
+          "#4c4247",
+          "#6e6268",
+          "#92858b",
+          "#b6aab0",
+          "#ddd0d6",
+          "#f7eaf1"
+        ]
+      },
+      "name-male": {
+        "role": "primary",
+        "displayName": "His Blue",
+        "canonical": "#2f6fd0",
+        "purpose": "A person’s name and any number belonging to him (The Two Voices Rule).",
+        "tonalRamp": [
+          "#000043",
+          "#001b6b",
+          "#003f94",
+          "#2562bf",
+          "#4787e9",
+          "#6faeff",
+          "#97d5ff",
+          "#b3f0ff"
+        ]
+      },
+      "name-female": {
+        "role": "primary",
+        "displayName": "Her Orchid",
+        "canonical": "#c33a86",
+        "purpose": "A person’s name and any number belonging to her (The Two Voices Rule). A magenta at 350.6°, held clear of berry at 7.5°.",
+        "tonalRamp": [
+          "#2f0013",
+          "#570030",
+          "#810051",
+          "#ac2773",
+          "#d74f98",
+          "#fe79bc",
+          "#ffa2e3",
+          "#ffbefd"
+        ]
+      },
+      "status-online": {
+        "role": "tertiary",
+        "displayName": "Signal Green",
+        "canonical": "#34c759",
+        "purpose": "Partner present. One of only two saturated non-pastel colours.",
+        "tonalRamp": [
+          "#001700",
+          "#003800",
+          "#005b00",
+          "#00800e",
+          "#00a63a",
+          "#48cc64",
+          "#7af38e",
+          "#99ffaa"
+        ]
+      },
+      "status-offline": {
+        "role": "tertiary",
+        "displayName": "Signal Red",
+        "canonical": "#ff3b30",
+        "purpose": "Partner absent. Never the only signal — the word appears beside it.",
+        "tonalRamp": [
+          "#3e0000",
+          "#6b0000",
+          "#980000",
+          "#c70000",
+          "#f53229",
+          "#ff6756",
+          "#ff9581",
+          "#ffb39d"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "hero": {
+        "displayName": "Hero",
+        "purpose": "The landing wordmark and the largest headings. The only place weight 800 appears."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Page-level headings."
+      },
+      "heading": {
+        "displayName": "Heading",
+        "purpose": "Section headings inside a card."
+      },
+      "subhead": {
+        "displayName": "Subhead",
+        "purpose": "Card titles, button labels, names. The sanctioned 600 weight."
+      },
+      "lede": {
+        "displayName": "Lede",
+        "purpose": "The opening line under a heading. Body face at display size."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default reading text."
+      },
+      "small": {
+        "displayName": "Small",
+        "purpose": "Descriptions, secondary lines, error text."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Stat labels, blurbs, chips. The only step with positive tracking."
+      }
+    },
+    "shadows": [
+      {
+        "name": "soft",
+        "value": "0 8px 30px rgb(61 43 58 / 0.08)",
+        "purpose": "Resting shadow on cards and header icon buttons. Ambient only — removing it leaves the hierarchy intact."
+      },
+      {
+        "name": "lift",
+        "value": "0 12px 40px rgb(61 43 58 / 0.12)",
+        "purpose": "Reserved for surfaces that genuinely float above the page. Currently only the navigation drawer."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-bounce",
+        "value": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "purpose": "The only easing in the product. The overshoot is the character."
+      },
+      {
+        "name": "duration-quick",
+        "value": "120ms",
+        "purpose": "Press feedback: scale(0.95) on :active. Token is --transition-duration-quick, not --duration-quick."
+      },
+      {
+        "name": "duration-soft",
+        "value": "240ms",
+        "purpose": "Drawer slide, scrim fade, presence dot colour change."
+      },
+      {
+        "name": "float",
+        "value": "@keyframes float: translateY(0) scale(1) → translateY(-9rem) scale(1.4), opacity 1 → 0",
+        "purpose": "An in-game reaction drifting up and vanishing. Lives in theme.css so a reskin changes how a reaction feels without touching TypeScript."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "container-app",
+        "value": "28rem",
+        "purpose": "The app column. There is no breakpoint at which it grows — desktop is the same object with more air."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one thing to do on a surface. Pill, syrup fill, squashes on press.",
+      "html": "<button class=\"ds-btn-primary\">❤️ PLAY</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:2.75rem;padding:0 1.5rem;border:none;border-radius:var(--radius-pill, 999px);font-family:var(--font-display, Poppins,ui-rounded,system-ui,sans-serif);font-size:1rem;font-weight:600;cursor:pointer;transition:transform var(--transition-duration-quick, 120ms) var(--ease-bounce, cubic-bezier(0.34,1.56,0.64,1));background:var(--color-berry, #c93a64);color:var(--color-shell, #fffdfb);box-shadow:var(--shadow-soft, 0 8px 30px rgb(61 43 58 / 0.08));}.ds-btn-primary:active{background:var(--color-berry-deep, #a82a4b);transform:scale(.95);}.ds-btn-primary:focus-visible{outline:2px solid var(--color-berry, #c93a64);outline-offset:2px;}.ds-btn-primary:disabled{opacity:.5;cursor:not-allowed;}.ds-btn-primary:disabled:active{transform:none;}"
+    },
+    {
+      "name": "Soft Button",
+      "kind": "button",
+      "refersTo": "button-soft",
+      "description": "The secondary choice, offered as an equal rather than a lesser option.",
+      "html": "<button class=\"ds-btn-soft\">🙈 NOT NOW</button>",
+      "css": ".ds-btn-soft{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:2.75rem;padding:0 1.5rem;border:none;border-radius:var(--radius-pill, 999px);font-family:var(--font-display, Poppins,ui-rounded,system-ui,sans-serif);font-size:1rem;font-weight:600;cursor:pointer;transition:transform var(--transition-duration-quick, 120ms) var(--ease-bounce, cubic-bezier(0.34,1.56,0.64,1));background:var(--color-sky, #cfe6ff);color:var(--color-ink, #3d2b3a);}.ds-btn-soft:active{background:var(--color-sky-deep, #a5d0f7);transform:scale(.95);}.ds-btn-soft:focus-visible{outline:2px solid var(--color-berry, #c93a64);outline-offset:2px;}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A way out that does not compete: no fill until it is pressed.",
+      "html": "<button class=\"ds-btn-ghost\">Sign out</button>",
+      "css": ".ds-btn-ghost{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;min-height:2.75rem;padding:0 1.5rem;border:none;border-radius:var(--radius-pill, 999px);font-family:var(--font-display, Poppins,ui-rounded,system-ui,sans-serif);font-size:1rem;font-weight:600;cursor:pointer;transition:transform var(--transition-duration-quick, 120ms) var(--ease-bounce, cubic-bezier(0.34,1.56,0.64,1));background:transparent;color:var(--color-muted, #7e6b78);}.ds-btn-ghost:active{background:var(--color-sky, #cfe6ff);transform:scale(.95);}.ds-btn-ghost:focus-visible{outline:2px solid var(--color-berry, #c93a64);outline-offset:2px;}"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Every panel in the app. Hairline border defines the edge; the shadow is only air.",
+      "html": "<div class=\"ds-card\"><h2 class=\"ds-card-title\">Four in a Row</h2><p class=\"ds-card-body\">Drop, block, gloat. First to four wins.</p></div>",
+      "css": ".ds-card{background:var(--color-shell, #fffdfb);border:1px solid var(--color-line, #f1e3ea);border-radius:var(--radius-card, 1rem);padding:1.5rem;box-shadow:var(--shadow-soft, 0 8px 30px rgb(61 43 58 / 0.08));color:var(--color-ink, #3d2b3a);}.ds-card-title{margin:0 0 .25rem;font-family:var(--font-display, Poppins,ui-rounded,system-ui,sans-serif);font-size:1.125rem;font-weight:600;line-height:1.35;}.ds-card-body{margin:0;font-family:var(--font-body, Inter,system-ui,sans-serif);font-size:.875rem;line-height:1.43;color:var(--color-muted, #7e6b78);}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "field-control",
+      "description": "Label above, control below, error beneath. The label always wraps the control.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">Their nickname</span><input class=\"ds-field-control\" value=\"Bean\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:.375rem;}.ds-field-label{font-family:var(--font-display, Poppins,ui-rounded,system-ui,sans-serif);font-size:.875rem;font-weight:600;color:var(--color-ink, #3d2b3a);}.ds-field-control{width:100%;min-height:2.75rem;padding:0 1rem;border:1px solid var(--color-line, #f1e3ea);border-radius:var(--radius-soft, 0.625rem);background:var(--color-cream, #fff8f2);color:var(--color-ink, #3d2b3a);font-family:var(--font-body, Inter,system-ui,sans-serif);font-size:1rem;}.ds-field-control:focus-visible{outline:2px solid var(--color-berry, #c93a64);outline-offset:2px;}"
+    },
+    {
+      "name": "Soon Chip",
+      "kind": "chip",
+      "refersTo": "chip-soon",
+      "description": "Marks a game that is listed but not yet built. Everything is unlocked — this is not progression.",
+      "html": "<span class=\"ds-chip-soon\">soon</span>",
+      "css": ".ds-chip-soon{display:inline-block;padding:.125rem .5rem;border-radius:var(--radius-pill, 999px);background:var(--color-butter, #ffeec2);color:var(--color-muted, #7e6b78);font-family:var(--font-body, Inter,system-ui,sans-serif);font-size:.75rem;line-height:1.35;letter-spacing:.04em;}"
+    },
+    {
+      "name": "Drawer Row",
+      "kind": "nav",
+      "refersTo": "nav-drawer",
+      "description": "One section in the side drawer: glyph, label, blurb. Blush marks the page you are on.",
+      "html": "<a class=\"ds-nav-row ds-nav-row--active\" href=\"#\"><span class=\"ds-nav-glyph\" aria-hidden=\"true\">💗</span><span class=\"ds-nav-text\"><span class=\"ds-nav-label\">Dashboard</span><span class=\"ds-nav-blurb\">The two of you, by the numbers</span></span></a>",
+      "css": ".ds-nav-row{display:flex;align-items:flex-start;gap:.75rem;padding:.75rem;border-radius:var(--radius-soft, 0.625rem);background:var(--color-cream, #fff8f2);text-decoration:none;transition:transform var(--transition-duration-quick, 120ms) var(--ease-bounce, cubic-bezier(0.34,1.56,0.64,1));}.ds-nav-row--active{background:var(--color-blush, #ffd6e0);}.ds-nav-row:active{background:var(--color-blush, #ffd6e0);transform:scale(.95);}.ds-nav-row:focus-visible{outline:2px solid var(--color-berry, #c93a64);outline-offset:2px;}.ds-nav-glyph{font-size:1.25rem;line-height:1;}.ds-nav-text{display:flex;flex-direction:column;}.ds-nav-label{font-family:var(--font-display, Poppins,ui-rounded,system-ui,sans-serif);font-weight:600;color:var(--color-ink, #3d2b3a);}.ds-nav-blurb{font-family:var(--font-body, Inter,system-ui,sans-serif);font-size:.75rem;color:var(--color-muted, #7e6b78);}"
+    },
+    {
+      "name": "Avatar with Presence Badge",
+      "kind": "custom",
+      "refersTo": "avatar",
+      "description": "The signature mark. Emoji avatar in a cream pill, status dot notched into the corner — three states, never two.",
+      "html": "<span class=\"ds-avatar\"><span class=\"ds-avatar-glyph\" aria-hidden=\"true\">🦊</span><span class=\"ds-avatar-dot ds-avatar-dot--online\"></span></span>",
+      "css": ".ds-avatar{position:relative;display:inline-flex;}.ds-avatar-glyph{display:flex;width:2.25rem;height:2.25rem;align-items:center;justify-content:center;border-radius:var(--radius-pill, 999px);background:var(--color-cream, #fff8f2);font-size:1.25rem;}.ds-avatar-dot{position:absolute;right:-.125rem;bottom:-.125rem;width:.75rem;height:.75rem;border-radius:var(--radius-pill, 999px);border:2px solid var(--color-cream, #fff8f2);transition:background var(--transition-duration-soft, 240ms) ease;}.ds-avatar-dot--online{background:var(--color-status-online, #34c759);}.ds-avatar-dot--offline{background:var(--color-status-offline, #ff3b30);}.ds-avatar-dot--unknown{background:var(--color-line, #f1e3ea);}"
+    },
+    {
+      "name": "Versus Statistic",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "The dashboard’s workhorse. Both partners’ figures at the ends of a row, each in their own colour.",
+      "html": "<div class=\"ds-versus\"><span class=\"ds-versus-num ds-versus-num--her\">14</span><span class=\"ds-versus-label\">wins</span><span class=\"ds-versus-num ds-versus-num--his\">11</span></div>",
+      "css": ".ds-versus{display:flex;align-items:center;justify-content:space-between;gap:.75rem;}.ds-versus-num{font-family:var(--font-display, Poppins,ui-rounded,system-ui,sans-serif);font-size:1.125rem;font-weight:700;font-variant-numeric:tabular-nums;}.ds-versus-num--her{color:var(--color-name-female, #c33a86);}.ds-versus-num--his{color:var(--color-name-male, #2f6fd0);}.ds-versus-label{font-family:var(--font-body, Inter,system-ui,sans-serif);font-size:.75rem;color:var(--color-muted, #7e6b78);letter-spacing:.04em;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Sweet Shop Counter",
+    "overview": "Rasmalai is named after a dessert, and the palette is the dessert: cream is the paper it is served on, blush is the icing, berry is the syrup, butter is the sponge, mint is the pistachio. Every surface in the product is something you could eat. This is not a decorative flourish laid over a neutral system — it is the system. There are no greys in the palette, no true white, no true black; even the darkest text colour is a warm plum rather than an ink black.\n\nUnderneath the confection the structure is disciplined. Corners follow a strict five-step ladder, edges are defined by a single hairline, numbers are tabular, and the type scale makes one hard jump from 400-weight body to 700/800-weight display with nothing in between. The softness is the finish, not the substance — which is what stops the app from reading as cloying and what lets it hold a real-time competitive match without feeling like a toy that broke.\n\nTwo anti-references are binding. This is not esports: no dark chrome, no neon-on-black, no angular framing, no leaderboard density. And despite being full of statistics, this is not a productivity dashboard: no data grid, no dense KPI tiles, no chart-first layout. The numbers on the dashboard are affection, not reporting.",
+    "keyCharacteristics": [
+      "One centred 28rem column on every route, phone and desktop alike",
+      "Pastel-only palette, warm plum ink, no greys and no pure white",
+      "Hairline borders define edges; shadows are atmosphere",
+      "Everything is a pill or a rounded card — no sharp corners anywhere",
+      "Springy 120ms press feedback on :active, never on :hover",
+      "Emoji glyphs instead of an icon set"
+    ],
+    "rules": [
+      {
+        "name": "The Six-Digit Rule",
+        "section": "colors",
+        "body": "Every palette token is a six-digit hex string, and this is load-bearing rather than stylistic. packages/games/src/reflex/client.tsx and basketball/client.tsx read these tokens at runtime with getComputedStyle and parse them with /^#([0-9a-f]{6})$/i. An oklch(), rgb(), three-digit, or eight-digit value drops both Phaser games to hardcoded fallbacks silently, with no error anywhere. apps/web/src/design-system/theme.test.ts enforces it."
+      },
+      {
+        "name": "The Two Voices Rule",
+        "section": "colors",
+        "body": "A person’s name, and any number that belongs to them, carries their colour — Cardamom Blue (#2f6fd0) or Orchid (#c33a86), from their real gender rather than from which side of a row they sit on, since the viewer is not always the same one of the two. This always goes through PersonName / nameTone; the mapping exists in exactly one file. Unknown gender falls back to Plum Ink rather than guessing. The two are held level on purpose — 4.64:1 and 4.67:1 on cream — so neither person’s name reads as the louder one, and hers is a magenta at 350.6 degrees rather than the rose it started as, because reaching that contrast walked it toward Rasmalai Pink at 7.5 degrees."
+      },
+      {
+        "name": "The Three Jobs Rule",
+        "section": "colors",
+        "body": "Rasmalai Pink is a fill beneath light text, a text colour on cream, and the focus ring. A value is only allowed into that token if it clears every one of those readings — 4.5:1 both ways, and the 3:1 the ring owes as a non-text indicator. It was #f2678f for exactly as long as nobody checked: a lovely pink that failed all three at 2.91 / 2.81 / 2.81. The fix was to darken the one token rather than split it, because a second pink a few degrees away would read as a bug, not as a system."
+      },
+      {
+        "name": "The Alarm Colours Rule",
+        "section": "colors",
+        "body": "status-online (#34c759) and status-offline (#ff3b30) are the only saturated non-pastel colours in the system, and they are reserved for partner presence. A status dot must read unambiguously at a glance, and a soft mint or blush tint cannot do that. Presence is also never colour alone — the drawer row spells the word beside the dot."
+      },
+      {
+        "name": "The Two Weights Rule",
+        "section": "typography",
+        "body": "Display type is 700 or 800; body type is 400. There is deliberately nothing in between — no 500 headings, no semibold body. The hierarchy is carried by the jump, so filling the gap flattens it. The one sanctioned exception is 600 at Subhead, where a card title has to sit close to the text it introduces."
+      },
+      {
+        "name": "The Tabular Rule",
+        "section": "typography",
+        "body": "Every number that can change — scores, streaks, days together, win counts — renders with tabular-nums. Statistics sit in fixed-width columns and side-by-side comparisons, and proportional digits make them jitter between renders."
+      },
+      {
+        "name": "The Additive Scale Rule",
+        "section": "typography",
+        "body": "These named steps sit alongside Tailwind’s text-xs … text-9xl, which all still resolve. packages/games renders with text-sm / text-xl / text-3xl and must not be edited, so the named scale extends the numeric one rather than replacing it."
+      },
+      {
+        "name": "The One Column Rule",
+        "section": "layout",
+        "body": "Every surface lives in the 28rem column. A design that needs more width is a design that has stopped being Rasmalai."
+      },
+      {
+        "name": "The Bare Spacing Rule",
+        "section": "layout",
+        "body": "Never set the bare --spacing token. In Tailwind v4 it is the multiplier behind the entire numeric scale, so changing it moves min-h-11 off the documented 44px tap-target minimum and resizes every glyph inside packages/games, which cannot be edited to compensate. Add named --spacing-* keys instead."
+      },
+      {
+        "name": "The Hairline Rule",
+        "section": "elevation",
+        "body": "The border defines the edge; the shadow only suggests air. If a surface needs more separation, reach for the tonal step (cream → shell) before reaching for a heavier shadow, and never for both at once."
+      },
+      {
+        "name": "The Pill Rule",
+        "section": "shapes",
+        "body": "If it is an object — pressed, worn, or read as a single token — it is a pill. If it is a container — something else lives inside it — it is on the radius ladder. Nothing is square."
+      },
+      {
+        "name": "The Active-Not-Hover Rule",
+        "section": "components",
+        "body": "No interaction may be hover-only. Every state a control can express must be reachable by touch, so styling responds to :active and :focus-visible; hover is a bonus a phone never receives."
+      },
+      {
+        "name": "The Pressed-Label Rule",
+        "section": "components",
+        "body": "A control that keeps its label colour through a press must have its pressed fill carry that label at 4.5:1, not just its resting fill. A pressed state is on screen only while a finger is down, so it is invisible to screenshots and reviews and shows up only for the person who cannot read the thing they are pressing. theme.test.ts computes this from the hex rather than trusting the eye."
+      },
+      {
+        "name": "The Glyph Rule",
+        "section": "components",
+        "body": "Iconography is emoji, chosen per game and per section, always aria-hidden with the meaning carried in adjacent text. No icon font, no icon package, no SVG icon set — the emoji are part of the confection, and they are why the product needs no icon system at all."
+      }
+    ],
+    "dos": [
+      "Do put every new surface in the 28rem centred column, and make desktop the same object with more air.",
+      "Do reference tokens — bg-berry, rounded-card, shadow-soft, duration-quick — and never hardcode a colour, radius, shadow, or duration. The whole identity has to be swappable by editing theme.css alone.",
+      "Do keep every palette value a six-digit hex string (The Six-Digit Rule).",
+      "Do set the column with max-w-app, never a literal max-w-md. Both are 28rem, so a stray literal only reveals itself the day the column changes width.",
+      "Do check a colour in every role it plays before changing it. Berry is a fill, a text colour and an indicator; passing as one of those says nothing about the other two.",
+      "Do check the pressed fill of any control that keeps its label colour through the press. A resting state that passes says nothing about the state a finger is holding.",
+      "Do give every control a 44px minimum on its short axis and a :active press, not a :hover.",
+      "Do use the standard focus ring — 2px Rasmalai Pink at 2px offset — on everything focusable, including links.",
+      "Do route every person’s name through PersonName and every owned number through nameTone.",
+      "Do pair any colour-carried state with a word: the presence row says \"online\" beside the dot, the \"soon\" chip says \"soon\" beside the 🔒.",
+      "Do use tabular-nums on any number that changes.",
+      "Do keep new animation inside the two named durations (120ms quick, 240ms soft) on the bounce easing, and let the global prefers-reduced-motion rule cancel it."
+    ],
+    "donts": [
+      "Don’t introduce a grey, a pure white, or a true black. The neutrals are warm and already exist.",
+      "Don’t convert the palette to oklch() or any other format — it silently breaks two Phaser games.",
+      "Don’t set the bare --spacing token (The Bare Spacing Rule).",
+      "Don’t add a sharp corner, or a radius that is not one of the five rungs.",
+      "Don’t add a heavier shadow to create separation; use the cream → shell tonal step and the hairline border.",
+      "Don’t add a weight between 400 and 700 to the type scale beyond the sanctioned 600 subhead.",
+      "Don’t bring in an icon library. Reach for an emoji glyph.",
+      "Don’t let the dashboard drift toward analytics — no data grids, no KPI tiles, no charts as the primary form.",
+      "Don’t let a game drift toward esports chrome — no dark backgrounds, no neon, no angular competitive framing.",
+      "Don’t edit packages/games styling to accommodate a web-app change; the named scales exist so the games keep rendering untouched."
+    ]
+  }
+}

@@ -18,7 +18,7 @@ export default async function LandingPage({
   const errorMessage = errorKey ? (ERROR_MESSAGES[errorKey] ?? ERROR_MESSAGES.sign_in_failed) : undefined;
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-8 px-6 py-12">
+    <main className="mx-auto flex min-h-dvh w-full max-w-app flex-col items-center justify-center gap-8 px-6 py-12">
       <header className="flex flex-col items-center gap-2 text-center">
         <h1>
           <Wordmark className="text-5xl tracking-tight" />

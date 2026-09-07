@@ -18,7 +18,7 @@ export default async function OnboardingPage() {
     typeof user.user_metadata.full_name === 'string' ? user.user_metadata.full_name : '';
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-6 px-6 py-10">
+    <main className="mx-auto flex min-h-dvh w-full max-w-app flex-col gap-6 px-6 py-10">
       <header className="flex flex-col gap-1 text-center">
         <h1 className="font-display text-3xl font-bold text-blueberry-deep">
           Tell us about you two

@@ -86,9 +86,9 @@ interface Palette {
 const FALLBACK: Palette = {
   court: 0xe5dbff,
   line: 0xf1e3ea,
-  ball: 0xf2678f,
+  ball: 0xc93a64,
   ink: 0x3d2b3a,
-  hoop: 0xd84972,
+  hoop: 0xa82a4b,
   board: 0xfffdfb,
   glow: 0xffeec2,
   mint: 0xc8f0e0,

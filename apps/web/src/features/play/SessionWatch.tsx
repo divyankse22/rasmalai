@@ -53,7 +53,7 @@ const SESSION_EVENTS = new Set<string>([
 function Sheet({ children }: { children: React.ReactNode }) {
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 flex justify-center p-3">
-      <div className="flex w-full max-w-md flex-col gap-3 rounded-card border border-line bg-shell p-4 shadow-lift">
+      <div className="flex w-full max-w-app flex-col gap-3 rounded-card border border-line bg-shell p-4 shadow-lift">
         {children}
       </div>
     </div>

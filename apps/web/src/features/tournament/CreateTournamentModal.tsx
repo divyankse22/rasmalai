@@ -82,7 +82,7 @@ export function CreateTournamentModal({
       aria-modal="true"
       aria-label="Start a tournament"
     >
-      <Card className="flex w-full max-w-md flex-col gap-4">
+      <Card className="flex w-full max-w-app flex-col gap-4">
         <div className="flex flex-col gap-1 text-center">
           <span className="text-2xl" aria-hidden="true">
             🏆

@@ -19,7 +19,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <RealtimeProvider>
       <PartnerPresenceProvider>
-        <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-5 px-5 py-8">
+        <div className="mx-auto flex min-h-dvh w-full max-w-app flex-col gap-5 px-5 py-8">
           <header className="flex items-center justify-between gap-4">
             <AppNav />
             {/* Their face and a badge, rather than a report on your own connection: whether there is

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -27,6 +27,7 @@ const COLOUR_TOKENS = [
   '--color-berry-deep',
   '--color-mint',
   '--color-sky',
+  '--color-sky-deep',
   '--color-blueberry',
   '--color-blueberry-deep',
   '--color-butter',
@@ -76,6 +77,92 @@ describe('theme colour tokens', () => {
   });
 });
 
+/**
+ * WCAG relative luminance, then the 4.5:1 ratio, computed from the hex in theme.css itself.
+ *
+ * Worth doing here rather than trusting a component test: a pressed fill is only on screen while a
+ * finger is down, so a contrast regression in an `:active` colour is invisible to every screenshot
+ * and every review, and shows up only for the person who cannot read the label they are pressing.
+ */
+function channel(hex: string, offset: number): number {
+  const c = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function luminance(hex: string): number {
+  return 0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5);
+}
+
+function contrast(a: string, b: string): number {
+  const [x, y] = [luminance(a), luminance(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+function colour(token: string): string {
+  const declaration = colourDeclarations().find((d) => d.name === token);
+  expect(declaration, `${token} is missing from theme.css`).toBeDefined();
+  return declaration!.value;
+}
+
+describe('theme colour contrast', () => {
+  /*
+   * `Button`'s soft variant keeps ink-coloured text through its press. Both fills it can be
+   * wearing at the time therefore have to carry that text, and the pressed one is the easy half to
+   * forget — it used to be `--color-blueberry-deep`, a saturated mid blue that put ink at 2.66:1.
+   */
+  it.each([
+    ['--color-ink', '--color-sky', 'soft button, resting'],
+    ['--color-ink', '--color-sky-deep', 'soft button, pressed'],
+    ['--color-shell', '--color-berry', 'primary button, resting'],
+    ['--color-shell', '--color-berry-deep', 'primary button, pressed'],
+  ])('carries %s on %s (%s)', (text, fill) => {
+    expect(contrast(colour(text), colour(fill))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  /*
+   * The other direction. `--color-berry` is a fill under light text *and* the colour of every
+   * error message and every focus ring, so it has to clear the bar read both ways — it was
+   * originally a bright #f2678f, which sat at 2.81:1 on cream and failed all three jobs at once.
+   * The focus ring only owes 3:1 as a non-text indicator, but it rides on the same token, so
+   * satisfying the text threshold settles it.
+   */
+  it.each([
+    ['--color-ink', 'body and headings'],
+    ['--color-muted', 'stat labels, blurbs, ghost buttons'],
+    ['--color-berry', 'error text, focus ring, wordmark'],
+    ['--color-name-male', 'his name and his numbers'],
+    ['--color-name-female', 'her name and her numbers'],
+  ])('reads as text on cream: %s (%s)', (token) => {
+    expect(contrast(colour(token), colour('--color-cream'))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  /*
+   * A press has to be visible as well as readable. Keeping the pressed fill in the same pastel
+   * family is what stops the fix from being "make it the same colour", so the step is asserted
+   * rather than left to whoever next opens the file with a colour picker.
+   */
+  it.each([
+    ['--color-sky', '--color-sky-deep'],
+    ['--color-berry', '--color-berry-deep'],
+  ])('darkens perceptibly from %s to %s when pressed', (rest, pressed) => {
+    expect(luminance(colour(pressed))).toBeLessThan(luminance(colour(rest)) * 0.85);
+  });
+
+  /*
+   * Her name colour and the action colour are both deep pinks and they are not allowed to become
+   * the same one. Both were pushed darker to reach 4.5:1, which walked them toward each other:
+   * name-female sits at a magenta 350.6 degrees against berry's 7.5, and losing that separation
+   * would mean a name reading as a button.
+   */
+  it('keeps her name colour distinct from the action colour', () => {
+    const [her, action] = [colour('--color-name-female'), colour('--color-berry')];
+    const channels = [1, 3, 5].map(
+      (i) => parseInt(her.slice(i, i + 2), 16) - parseInt(action.slice(i, i + 2), 16),
+    );
+    expect(Math.hypot(...channels)).toBeGreaterThan(24);
+  });
+});
+
 describe('theme motion tokens', () => {
   /*
    * The namespace regression this file's own comment documents: under `--duration-*` every
@@ -101,6 +188,29 @@ describe('theme structural tokens', () => {
   // Buttons, avatars, status dots and chips are pills by decision, not by accident.
   it('keeps the pill radius', () => {
     expect(themeCss).toMatch(/--radius-pill:\s*999px;/);
+  });
+
+  /*
+   * The app column, as a token rather than as a literal repeated across the shell and every route
+   * that opens outside it. `--container-app` sits in Tailwind v4's `--container-*` namespace, so it
+   * is `max-w-app` at the call site; the point of the token is that widening the column is one edit
+   * here instead of a grep that misses a file.
+   */
+  it('declares the app column as a container token', () => {
+    expect(themeCss).toMatch(/--container-app:\s*28rem;/);
+  });
+
+  /*
+   * ...and that the token is actually the one in use. `max-w-md` is 28rem too, so a stray literal
+   * is invisible until the day the column changes width and one surface silently does not follow.
+   */
+  it('uses the container token rather than a literal max-w-md', () => {
+    const src = fileURLToPath(new URL('..', import.meta.url));
+    const offenders = readdirSync(src, { recursive: true, encoding: 'utf8' })
+      .filter((file) => /\.tsx?$/.test(file) && !/\.test\./.test(file))
+      .filter((file) => readFileSync(`${src}${file}`, 'utf8').includes('max-w-md'));
+
+    expect(offenders, 'use max-w-app so the column stays one edit wide').toEqual([]);
   });
 
   /*

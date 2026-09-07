@@ -19,21 +19,39 @@
   --color-cream: #fff8f2;
   --color-shell: #fffdfb;
   --color-blush: #ffd6e0;
-  --color-berry: #f2678f;
-  --color-berry-deep: #d84972;
+  /* Berry is three things at once: the fill under light button text, the colour of every error
+     message, and the focus ring. It was #f2678f, which is a lovely pink and failed all three —
+     2.91:1 under shell text, 2.81:1 as text on cream, 2.81:1 as a ring against a 3:1 minimum. This
+     is the lightest value that clears every one of them (4.84 / 4.67 / 4.67). Darkening the token
+     rather than splitting it keeps the palette at one pink; a second near-identical pink beside it
+     would read as a bug. `theme.test.ts` holds all three thresholds. */
+  --color-berry: #c93a64;
+  --color-berry-deep: #a82a4b;
   --color-mint: #c8f0e0;
   --color-sky: #cfe6ff;
+  /* The pressed state of a soft button. It used to press to `--color-blueberry-deep`, which
+     is a saturated mid blue: the label stays `--color-ink` through the press, and ink on that
+     blue is 2.66:1 — unreadable, and only on screen while a finger is down, so nothing but a
+     contrast check would ever catch it. This is the same hue a step darker, which keeps the
+     press visible (about 21% less luminance) and the label at 8:1. `theme.test.ts` holds both
+     ends of that. */
+  --color-sky-deep: #a5d0f7;
   --color-blueberry: #3a88ee;
   --color-blueberry-deep: #2b70ca;
   --color-butter: #ffeec2;
   --color-lilac: #e5dbff;
   --color-ink: #3d2b3a;
 
-  /* Names are coloured by gender. Both are darkened enough to stay readable as body text on
-     cream, rather than being the pastel fill colours used for backgrounds. */
+  /* Names are coloured by gender, and both clear 4.5:1 on cream as real body text rather than
+     being the pastel fill colours used for backgrounds: 4.64 and 4.67, deliberately level so
+     neither person's name reads as the louder one.
+     Her colour is a magenta (350.6 degrees) rather than the rose it used to be, because reaching
+     4.5:1 walked it toward `--color-berry` at 7.5 degrees — a name that looks like the Play button
+     is worse than the contrast problem that started this. `theme.test.ts` guards the gap. */
   --color-name-male: #2f6fd0;
-  --color-name-female: #e0447a;
-  --color-muted: #8b7684;
+  --color-name-female: #c33a86;
+  /* 3.97:1 previously, on the most widespread secondary text in the app. */
+  --color-muted: #7e6b78;
   --color-line: #f1e3ea;
 
   /* Presence status: genuine alert colours, not the pastel palette above. A status dot has to read
@@ -124,7 +142,9 @@
   --spacing-section: 2rem;
   --spacing-hero: 3rem;
 
-  /* The app column. Replaces the literal `max-w-md` repeated across the shell and three routes. */
+  /* The app column, used as `max-w-app`. The literal `max-w-md` it replaced is the same 28rem, so
+     a stray one stays invisible until the column changes width and one surface fails to follow;
+     `theme.test.ts` fails on any that come back. */
   --container-app: 28rem;
 }
 

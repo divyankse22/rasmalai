@@ -53,7 +53,7 @@ function readPalette(): Palette {
     ground: themeColour('--color-lilac', 0xe5dbff),
     lane: themeColour('--color-cream', 0xfff8f2),
     hazard: themeColour('--color-ink', 0x3d2b3a),
-    you: themeColour('--color-berry', 0xf2678f),
+    you: themeColour('--color-berry', 0xc93a64),
     them: themeColour('--color-sky', 0xcfe6ff),
     ink: themeColour('--color-ink', 0x3d2b3a),
   };
