@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { SignOutButton } from '@/features/auth/SignOutButton';
 import { OnboardingWizard } from '@/features/onboarding/OnboardingWizard';
 import { getMyProfile } from '@/lib/api';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
@@ -27,6 +28,7 @@ export default async function OnboardingPage() {
       </header>
 
       <OnboardingWizard suggestedName={suggestedName} />
+      <SignOutButton />
     </main>
   );
 }

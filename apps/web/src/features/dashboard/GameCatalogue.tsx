@@ -161,14 +161,11 @@ function CategorySwipe({ category, games }: { category: GameCategory; games: Cat
 
   function onPointerDown(event: ReactPointerEvent<HTMLUListElement>) {
     if (ordered.length < 2 || event.button !== 0) return;
+    const target = event.target as Element;
     drag.current = { pointerId: event.pointerId, startX: event.clientX, dragged: false };
-    /*
-     * Own the pointer for the rest of the gesture. A mouse gets no implicit pointer capture, so a
-     * button released past the window edge or over the toolbar delivers neither `pointerup` nor
-     * `pointercancel` here, and the drag would never learn it ended — leaving the row frozen
-     * part-way between two games at whatever offset the pointer reached, until a reload.
-     */
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // Capture on the pressed element so the browser still delivers an ordinary click to its
+    // button. Pointer events from it bubble to the track, even if the drag ends outside the card.
+    target.setPointerCapture?.(event.pointerId);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);

@@ -268,19 +268,12 @@ export function OnboardingWizard({ suggestedName }: { suggestedName: string }) {
 
   function onTrackPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('input, textarea, select')) return;
+    const target = event.target as Element;
+    if (target.closest('input, textarea, select')) return;
     dragState.current = { pointerId: event.pointerId, startX: event.clientX, dragged: false };
-    /*
-     * Own the pointer for the rest of the gesture. Without this the drag can simply never be told
-     * it ended: a mouse gets no implicit pointer capture, so a button released past the window
-     * edge, over the toolbar, or over the native picker `type="date"` opens on the "when did you
-     * two meet?" card delivers no `pointerup` and no `pointercancel` to the page at all. The drag
-     * would keep the offset it had reached and leave the card frozen part-way between two
-     * questions, at whatever arbitrary point the pointer got to, until a reload. Capture makes the
-     * browser deliver the end of the gesture here wherever it happens; `lostpointercapture` is the
-     * backstop for the cases where it is taken away from us instead.
-     */
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // Capture on the pressed element so the browser still delivers an ordinary click to its
+    // button. Pointer events from it bubble to the track, even if the drag ends outside the card.
+    target.setPointerCapture?.(event.pointerId);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);

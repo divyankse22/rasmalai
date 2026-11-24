@@ -41,13 +41,16 @@ export async function fetchFromApi(path: string, init: RequestInit = {}): Promis
   });
 }
 
+async function readFromApi<T>(path: string): Promise<T> {
+  const response = await fetchFromApi(path);
+  if (!response.ok) throw new Error(`Rasmalai API ${path} returned HTTP ${response.status}`);
+  return (await response.json()) as T;
+}
+
 /** The signed-in user's profile, or null when they have not been through onboarding yet. */
 export async function getMyProfile(): Promise<UserProfile | null> {
-  const response = await fetchFromApi('/api/me');
-  if (!response.ok) return null;
-
-  const body = (await response.json()) as { profile: UserProfile | null };
-  return body.profile;
+  const { profile } = await readFromApi<{ profile: UserProfile | null }>('/api/me');
+  return profile;
 }
 
 export interface PairingPerson {
@@ -68,10 +71,8 @@ export interface PairingState {
   outgoing: { id: string; otherUser: PairingPerson }[];
 }
 
-export async function getPairingState(): Promise<PairingState | null> {
-  const response = await fetchFromApi('/api/pairing');
-  if (!response.ok) return null;
-  return (await response.json()) as PairingState;
+export function getPairingState(): Promise<PairingState> {
+  return readFromApi<PairingState>('/api/pairing');
 }
 
 /**
@@ -80,8 +81,6 @@ export async function getPairingState(): Promise<PairingState | null> {
  * The payload type is shared with the backend rather than re-declared here, so a stat that changes
  * shape breaks the build instead of quietly rendering `undefined`.
  */
-export async function getDashboard(): Promise<DashboardPayload | null> {
-  const response = await fetchFromApi('/api/dashboard');
-  if (!response.ok) return null;
-  return (await response.json()) as DashboardPayload;
+export function getDashboard(): Promise<DashboardPayload> {
+  return readFromApi<DashboardPayload>('/api/dashboard');
 }

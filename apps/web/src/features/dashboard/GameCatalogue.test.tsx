@@ -33,6 +33,15 @@ const basketball = game({ slug: 'basketball', name: 'Basketball', category: 'com
 const fourInARow = game({ slug: 'four-in-a-row', name: 'Four in a Row', category: 'competitive' });
 
 describe('GameCatalogue grouping', () => {
+  it('keeps pointer capture on an invite button inside a swipeable category', () => {
+    render(<GameCatalogue games={[basketball, fourInARow]} />);
+    const invite = screen.getByRole('button', { name: 'invite:Basketball' });
+    invite.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(invite, { pointerId: 3, clientX: 50 });
+    expect(invite.setPointerCapture).toHaveBeenCalledWith(3);
+    fireEvent.pointerUp(invite, { pointerId: 3, clientX: 50 });
+  });
+
   it('introduces each category it has games for', () => {
     render(<GameCatalogue games={[game()]} />);
 
