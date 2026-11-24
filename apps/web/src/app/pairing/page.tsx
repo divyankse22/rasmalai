@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { SignOutButton } from '@/features/auth/SignOutButton';
 import { PairingPanel } from '@/features/pairing/PairingPanel';
 import { getMyProfile, getPairingState } from '@/lib/api';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
@@ -16,7 +17,7 @@ export default async function PairingPage() {
   if (!profile) redirect('/onboarding');
 
   const state = await getPairingState();
-  if (state?.couple) redirect('/dashboard');
+  if (state.couple) redirect('/dashboard');
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col gap-6 px-6 py-10">
@@ -30,10 +31,11 @@ export default async function PairingPage() {
       <RealtimeProvider>
         <PairingPanel
           pairingCode={profile.pairingCode}
-          incoming={state?.incoming ?? []}
-          outgoing={state?.outgoing ?? []}
+          incoming={state.incoming}
+          outgoing={state.outgoing}
         />
       </RealtimeProvider>
+      <SignOutButton />
     </main>
   );
 }

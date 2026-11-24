@@ -22,7 +22,6 @@ export default async function PlayPage({ params }: { params: Promise<{ sessionId
   if (!user) redirect('/');
 
   const data = await getDashboard();
-  if (!data) redirect('/');
   if (!data.viewer) redirect('/onboarding');
   if (!data.couple) redirect('/pairing');
 

@@ -148,16 +148,13 @@ describe('OnboardingWizard swiping', () => {
    * nor `pointercancel`. Without capture the drag never learns it is over, and the card is left
    * frozen part-way between two questions at whatever offset the pointer reached.
    */
-  it('takes pointer capture so the gesture cannot be lost mid-drag', async () => {
-    // jsdom implements no pointer capture at all, so the call itself is what we can observe.
-    const capture = vi.fn();
-    (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture = capture;
-
-    const { container } = render(<OnboardingWizard suggestedName="" />);
-    fireEvent.pointerDown(track(container), { pointerId: 7, clientX: 200 });
-
-    expect(capture).toHaveBeenCalledWith(7);
-    delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
+  it('keeps pointer capture on the pressed answer so a tap activates the button', () => {
+    render(<OnboardingWizard suggestedName="" />);
+    const answer = screen.getByRole('button', { name: 'Not yet — I’m first' });
+    answer.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(answer, { pointerId: 7, clientX: 200 });
+    expect(answer.setPointerCapture).toHaveBeenCalledWith(7);
+    fireEvent.pointerUp(answer, { pointerId: 7, clientX: 200 });
   });
 
   it('unwedges the card if the gesture is lost anyway', async () => {

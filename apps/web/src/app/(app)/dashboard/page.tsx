@@ -21,7 +21,6 @@ export default async function DashboardPage() {
   // One request for the whole page. It answers in all three states, and the two nulls below are
   // what the routing turns on — a missing profile means onboarding, a missing couple means pairing.
   const data = await getDashboard();
-  if (!data) redirect('/');
   if (!data.viewer) redirect('/onboarding');
   if (!data.couple || !data.partner || !data.stats) redirect('/pairing');
 

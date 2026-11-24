@@ -9,14 +9,19 @@ export function SignInButton() {
 
   async function signIn() {
     setState('redirecting');
-    const supabase = createSupabaseBrowserClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-
-    // On success the browser navigates away, so reaching here means it did not work.
-    if (error) setState('failed');
+    try {
+      const supabase = createSupabaseBrowserClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          queryParams: { prompt: 'select_account' },
+        },
+      });
+      if (error) setState('failed');
+    } catch {
+      setState('failed');
+    }
   }
 
   return (
@@ -25,7 +30,9 @@ export function SignInButton() {
         {state === 'redirecting' ? 'Taking you to Google…' : 'Continue with Google'}
       </Button>
       {state === 'failed' && (
-        <p className="text-sm text-berry">That did not work. Try again in a moment.</p>
+        <p className="text-sm text-berry" role="alert">
+          That did not work. Try again in a moment.
+        </p>
       )}
     </div>
   );

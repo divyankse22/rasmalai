@@ -19,7 +19,6 @@ export default async function TournamentPage({ params }: { params: Promise<{ id:
   if (!user) redirect('/');
 
   const data = await getDashboard();
-  if (!data) redirect('/');
   if (!data.viewer) redirect('/onboarding');
   if (!data.couple) redirect('/pairing');
 
